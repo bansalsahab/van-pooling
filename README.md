@@ -26,25 +26,19 @@ This platform is for corporate campuses or business parks that want to replace s
 
 ## Quick start
 
-1. Copy the environment template.
-
-```bash
-cp .env.example .env
-```
-
-2. Start the stack.
+1. Start the stack.
 
 ```bash
 docker-compose up --build
 ```
 
-3. Load demo data for test users and vans.
+2. Load demo data for test users and vans.
 
 ```bash
 docker-compose exec backend python scripts/seed_data.py
 ```
 
-4. Open the apps.
+3. Open the apps.
 
 - Frontend: `http://localhost:5173`
 - Swagger UI: `http://localhost:8000/docs`
