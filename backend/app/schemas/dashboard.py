@@ -18,6 +18,7 @@ class AdminDashboardSummary(BaseModel):
     active_vans: int
     pending_requests: int
     active_trips: int
+    open_alerts: int
 
 
 class DriverDashboardSummary(BaseModel):

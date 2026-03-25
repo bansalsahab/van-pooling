@@ -8,6 +8,7 @@ import { useCopilot } from "../hooks/useCopilot";
 import { useLiveStream } from "../hooks/useLiveStream";
 import { api } from "../lib/api";
 import type {
+  AlertSummary,
   AdminDashboardSummary,
   AdminLiveSnapshot,
   AIInsight,
@@ -35,7 +36,9 @@ export function AdminDashboard({
   const [fallbackEmployees, setFallbackEmployees] = useState<UserProfile[]>([]);
   const [fallbackDrivers, setFallbackDrivers] = useState<UserProfile[]>([]);
   const [fallbackTrips, setFallbackTrips] = useState<TripSummary[]>([]);
+  const [fallbackAlerts, setFallbackAlerts] = useState<AlertSummary[]>([]);
   const [fallbackInsights, setFallbackInsights] = useState<AIInsight[]>([]);
+  const [selectedVanByTrip, setSelectedVanByTrip] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [userForm, setUserForm] = useState({
@@ -62,19 +65,33 @@ export function AdminDashboard({
   const employees = snapshot?.data.employees ?? fallbackEmployees;
   const drivers = snapshot?.data.drivers ?? fallbackDrivers;
   const trips = snapshot?.data.trips ?? fallbackTrips;
+  const alerts = snapshot?.data.alerts ?? fallbackAlerts;
   const insights = snapshot?.insights ?? fallbackInsights;
   const fleetMarkers = useMemo(() => buildFleetMarkers(vans), [vans]);
   const tripPolylines = useMemo(() => buildTripPolylines(trips), [trips]);
+  const availableVans = useMemo(
+    () => vans.filter((van) => van.status === "available"),
+    [vans],
+  );
 
   async function refresh() {
     if (!token) return;
-    const [dashboardData, vanData, employeeData, driverData, tripData, aiInsights] =
+    const [
+      dashboardData,
+      vanData,
+      employeeData,
+      driverData,
+      tripData,
+      alertData,
+      aiInsights,
+    ] =
       await Promise.all([
         api.getAdminDashboard(token),
         api.getAdminVans(token),
         api.getAdminEmployees(token),
         api.getAdminDrivers(token),
         api.getAdminTrips(token),
+        api.getAdminAlerts(token),
         api.getAIInsights(token),
       ]);
     setFallbackDashboard(dashboardData);
@@ -82,6 +99,7 @@ export function AdminDashboard({
     setFallbackEmployees(employeeData);
     setFallbackDrivers(driverData);
     setFallbackTrips(tripData);
+    setFallbackAlerts(alertData);
     setFallbackInsights(aiInsights);
   }
 
@@ -145,12 +163,62 @@ export function AdminDashboard({
     }
   }
 
+  async function handleResolveAlert(alertId: string) {
+    if (!token) return;
+    setMessage(null);
+    setError(null);
+    try {
+      await api.resolveAdminAlert(token, alertId);
+      setMessage("Alert resolved.");
+      await Promise.all([refresh(), refreshBrief()]);
+    } catch (resolveError) {
+      setError(
+        resolveError instanceof Error ? resolveError.message : "Could not resolve alert.",
+      );
+    }
+  }
+
+  async function handleReassignTrip(tripId: string) {
+    if (!token) return;
+    const selectedVanId = selectedVanByTrip[tripId];
+    if (!selectedVanId) {
+      setError("Choose an available van before reassigning the trip.");
+      return;
+    }
+    setMessage(null);
+    setError(null);
+    try {
+      await api.reassignAdminTrip(token, tripId, { van_id: selectedVanId });
+      setMessage("Trip reassigned to the selected van.");
+      await Promise.all([refresh(), refreshBrief()]);
+    } catch (reassignError) {
+      setError(
+        reassignError instanceof Error ? reassignError.message : "Could not reassign trip.",
+      );
+    }
+  }
+
+  async function handleCancelTrip(tripId: string) {
+    if (!token) return;
+    setMessage(null);
+    setError(null);
+    try {
+      await api.cancelAdminTrip(token, tripId);
+      setMessage("Trip cancelled by dispatch.");
+      await Promise.all([refresh(), refreshBrief()]);
+    } catch (cancelError) {
+      setError(
+        cancelError instanceof Error ? cancelError.message : "Could not cancel trip.",
+      );
+    }
+  }
+
   return (
     <AppLayout
       title="Operations Command"
       subtitle={`A live control surface for ${user?.company_name || "your company"}.`}
     >
-      <div className="content-grid four-column">
+      <div className="content-grid five-column">
         <MetricPanel
           label="Employees"
           value={String(dashboard?.employees_count || 0)}
@@ -166,12 +234,24 @@ export function AdminDashboard({
           value={String(dashboard?.available_vans || 0)}
           detail={`${dashboard?.total_vans || 0} total vans`}
         />
+        <MetricPanel
+          label="Open Alerts"
+          value={String(dashboard?.open_alerts || 0)}
+          detail="dispatch exceptions"
+        />
         <section className="metric-panel">
           <span>Realtime Feed</span>
           <LiveStatusBadge state={connectionState} lastUpdatedAt={lastMessageAt} />
           <p>{streamError || "Fleet, trip, and demand signals are streaming live."}</p>
         </section>
       </div>
+
+      {(message || error) && (
+        <div className="stack compact">
+          {message && <div className="success-banner">{message}</div>}
+          {error && <div className="error-banner">{error}</div>}
+        </div>
+      )}
 
       {section === "overview" && (
         <>
@@ -200,25 +280,40 @@ export function AdminDashboard({
             <section className="panel">
               <div className="panel-header">
                 <div>
-                  <p className="eyebrow">Fleet Snapshot</p>
-                  <h3>Van readiness</h3>
+                  <p className="eyebrow">Operational Alerts</p>
+                  <h3>Dispatch exceptions</h3>
                 </div>
               </div>
               <div className="stack compact">
-                {vans.slice(0, 4).map((van) => (
-                  <div className="list-card" key={van.id}>
-                    <div>
-                      <strong>{van.license_plate}</strong>
-                      <p>{van.driver_name || "No driver assigned"}</p>
-                      <p>
-                        {van.last_location_update
-                          ? `Last ping ${formatTimestamp(van.last_location_update)}`
-                          : "No live ping"}
-                      </p>
+                {alerts.length === 0 ? (
+                  <p className="muted-copy">No open operational alerts right now.</p>
+                ) : (
+                  alerts.slice(0, 6).map((alert) => (
+                    <div className="list-card" key={alert.id}>
+                      <div>
+                        <strong>{alert.title || "Operational alert"}</strong>
+                        <p>{alert.message}</p>
+                        <p>
+                          {alert.created_at
+                            ? `Raised ${formatTimestamp(alert.created_at)}`
+                            : "Raised recently"}
+                        </p>
+                      </div>
+                      <div className="stack compact align-end">
+                        <span className={`priority-pill ${alert.severity}`}>
+                          {alert.severity}
+                        </span>
+                        <button
+                          className="ghost-button"
+                          onClick={() => void handleResolveAlert(alert.id)}
+                          type="button"
+                        >
+                          Resolve
+                        </button>
+                      </div>
                     </div>
-                    <span className="status-pill">{van.status}</span>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </section>
 
@@ -281,8 +376,6 @@ export function AdminDashboard({
                 <h3>Provisioning</h3>
               </div>
             </div>
-            {message && <div className="success-banner">{message}</div>}
-            {error && <div className="error-banner">{error}</div>}
             <div className="content-grid two-column">
               <form className="panel inset-panel stack" onSubmit={handleCreateUser}>
                 <div>
@@ -468,6 +561,7 @@ export function AdminDashboard({
                     <th>Passengers</th>
                     <th>ETA</th>
                     <th>Started</th>
+                    <th>Dispatch Ops</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -475,7 +569,7 @@ export function AdminDashboard({
                     <tr key={trip.id}>
                       <td>{trip.id.slice(0, 8)}</td>
                       <td>{trip.van_license_plate || trip.van_id}</td>
-                      <td>{trip.status}</td>
+                      <td>{trip.status.replaceAll("_", " ")}</td>
                       <td>{trip.passenger_count}</td>
                       <td>
                         {trip.route?.duration_minutes
@@ -485,6 +579,42 @@ export function AdminDashboard({
                             : "TBD"}
                       </td>
                       <td>{trip.started_at ? formatTimestamp(trip.started_at) : "Not started"}</td>
+                      <td>
+                        <div className="table-actions">
+                          <select
+                            value={selectedVanByTrip[trip.id] || ""}
+                            onChange={(event) =>
+                              setSelectedVanByTrip((current) => ({
+                                ...current,
+                                [trip.id]: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="">Choose van</option>
+                            {availableVans
+                              .filter((van) => van.id !== trip.van_id)
+                              .map((van) => (
+                                <option key={van.id} value={van.id}>
+                                  {van.license_plate}
+                                </option>
+                              ))}
+                          </select>
+                          <button
+                            className="ghost-button"
+                            onClick={() => void handleReassignTrip(trip.id)}
+                            type="button"
+                          >
+                            Reassign
+                          </button>
+                          <button
+                            className="ghost-button"
+                            onClick={() => void handleCancelTrip(trip.id)}
+                            type="button"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -519,7 +649,7 @@ function buildTripPolylines(trips: TripSummary[]): MapPolylineSpec[] {
     .map((trip) => ({
       id: trip.id,
       encodedPath: trip.route.encoded_polyline,
-      color: trip.status === "active" ? "#58b6ff" : "#ff8a4c",
+      color: trip.status.startsWith("active_") ? "#58b6ff" : "#ff8a4c",
     }));
 }
 

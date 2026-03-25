@@ -60,9 +60,13 @@ def authenticate_user(db: Session, email: str, password: str) -> User:
 
 def build_token_response(user: User) -> TokenResponse:
     """Create token payload plus normalized user profile."""
+    claims = {
+        "role": user.role.value,
+        "company_id": str(user.company_id) if user.company_id else None,
+    }
     return TokenResponse(
-        access_token=create_access_token(user.id),
-        refresh_token=create_refresh_token(user.id),
+        access_token=create_access_token(user.id, extra_claims=claims),
+        refresh_token=create_refresh_token(user.id, extra_claims=claims),
         user=serialize_user(user),
     )
 

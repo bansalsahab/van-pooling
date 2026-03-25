@@ -1,15 +1,23 @@
 """Application configuration."""
 import json
+from pathlib import Path
 from typing import Any
 
 from pydantic import AnyHttpUrl, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+ROOT_ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+    model_config = SettingsConfigDict(
+        env_file=ROOT_ENV_PATH,
+        case_sensitive=True,
+        extra="ignore",
+    )
 
     API_V1_STR: str = "/api/v1"
     PROJECT_NAME: str = "Van Pooling Platform"
@@ -54,7 +62,21 @@ class Settings(BaseSettings):
 
     MATCHING_AGGREGATION_WINDOW_SECONDS: int = 90
     MATCHING_PICKUP_RADIUS_METERS: int = 800
+    MATCHING_DESTINATION_CLUSTER_RADIUS_METERS: int = 1200
     MATCHING_MAX_DETOUR_MINUTES: int = 15
+    MATCHING_MAX_EXTRA_DISTANCE_METERS: int = 5000
+    MATCHING_SCHEDULE_COMPATIBILITY_MINUTES: int = 20
+    MATCHING_STALE_DRIVER_HEARTBEAT_SECONDS: int = 120
+    MATCHING_RECOVERY_GRACE_SECONDS: int = 30
+    MATCHING_SCORE_PICKUP_WEIGHT: float = 0.40
+    MATCHING_SCORE_DESTINATION_WEIGHT: float = 0.30
+    MATCHING_SCORE_DETOUR_WEIGHT: float = 0.20
+    MATCHING_SCORE_READINESS_WEIGHT: float = 0.10
+    VAN_STALE_ALERT_SECONDS: int = 180
+    DRIVER_ARRIVAL_THRESHOLD_METERS: int = 120
+    DISPATCH_WORKER_INTERVAL_SECONDS: int = 15
+    SCHEDULED_RIDE_DISPATCH_LEAD_MINUTES: int = 15
+    SCHEDULED_RIDE_UNMATCHED_ALERT_MINUTES: int = 10
 
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"

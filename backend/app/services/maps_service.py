@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from datetime import datetime, timedelta
 from typing import Any
@@ -14,6 +15,7 @@ from app.schemas.maps import GeocodeResponse, RoutePlan, RouteStep, RouteWaypoin
 
 _CACHE_TTL = timedelta(minutes=10)
 _maps_cache: dict[str, tuple[datetime, Any]] = {}
+logger = logging.getLogger(__name__)
 
 
 def geocode_address(address: str) -> GeocodeResponse | None:
@@ -237,7 +239,12 @@ def _read_json(url: str) -> dict[str, Any]:
     try:
         with request.urlopen(url, timeout=12) as response:
             return json.loads(response.read().decode("utf-8"))
-    except (error.HTTPError, error.URLError, TimeoutError, ValueError) as exc:
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        logger.warning("Google Maps JSON request failed with %s: %s", exc.code, detail[:500])
+        raise RuntimeError("Google Maps request failed.") from exc
+    except (error.URLError, TimeoutError, ValueError) as exc:
+        logger.warning("Google Maps JSON request failed: %s", exc)
         raise RuntimeError("Google Maps request failed.") from exc
 
 
@@ -248,7 +255,12 @@ def _post_json(url: str, body: dict[str, Any], headers: dict[str, str] | None = 
     try:
         with request.urlopen(req, timeout=15) as response:
             return json.loads(response.read().decode("utf-8"))
-    except (error.HTTPError, error.URLError, TimeoutError, ValueError) as exc:
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        logger.warning("Google Maps POST request failed with %s: %s", exc.code, detail[:500])
+        raise RuntimeError("HTTP JSON request failed.") from exc
+    except (error.URLError, TimeoutError, ValueError) as exc:
+        logger.warning("Google Maps POST request failed: %s", exc)
         raise RuntimeError("HTTP JSON request failed.") from exc
 
 

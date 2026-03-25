@@ -1,10 +1,15 @@
 """FastAPI application entry point."""
+from __future__ import annotations
+
+import asyncio
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.database import check_database_connection, init_db
+from app.services.dispatch_worker import dispatch_worker_loop, run_startup_recovery
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -25,9 +30,25 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 
 
 @app.on_event("startup")
-def startup() -> None:
-    """Initialize local database tables on application startup."""
+async def startup() -> None:
+    """Initialize the database, recover pending dispatches, and start workers."""
     init_db()
+    run_startup_recovery()
+    app.state.dispatch_stop_event = asyncio.Event()
+    app.state.dispatch_task = asyncio.create_task(
+        dispatch_worker_loop(app.state.dispatch_stop_event)
+    )
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    """Stop background workers."""
+    stop_event = getattr(app.state, "dispatch_stop_event", None)
+    task = getattr(app.state, "dispatch_task", None)
+    if stop_event is not None:
+        stop_event.set()
+    if task is not None:
+        await task
 
 
 @app.get("/", tags=["meta"])

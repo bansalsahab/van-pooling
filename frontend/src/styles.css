@@ -97,6 +97,35 @@ a {
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.26);
 }
 
+.auth-card-employee {
+  background:
+    linear-gradient(165deg, rgba(8, 18, 34, 0.84), rgba(11, 25, 46, 0.9)),
+    rgba(7, 15, 28, 0.72);
+}
+
+.auth-card-driver {
+  background:
+    linear-gradient(165deg, rgba(8, 18, 34, 0.84), rgba(14, 33, 56, 0.9)),
+    rgba(7, 15, 28, 0.72);
+}
+
+.auth-card-admin {
+  background:
+    linear-gradient(165deg, rgba(8, 18, 34, 0.84), rgba(24, 28, 56, 0.92)),
+    rgba(7, 15, 28, 0.72);
+}
+
+.auth-role-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.auth-role-header h2 {
+  margin: 0;
+  font-size: 1.7rem;
+}
+
 .segment-control {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -201,6 +230,34 @@ input::placeholder {
 
 .metric-card {
   padding: 1.1rem;
+}
+
+.role-card {
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.role-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(132, 191, 255, 0.28);
+}
+
+.role-card p {
+  margin: 0.65rem 0 0;
+  color: #b4c5d7;
+}
+
+.role-card.selected {
+  background:
+    linear-gradient(135deg, rgba(88, 182, 255, 0.18), rgba(255, 138, 76, 0.16)),
+    rgba(9, 19, 35, 0.8);
+  border-color: rgba(132, 191, 255, 0.36);
+  box-shadow: 0 16px 34px rgba(8, 18, 34, 0.22);
 }
 
 .metric-card span,
@@ -331,6 +388,10 @@ input::placeholder {
 
 .four-column {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.five-column {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .panel,
@@ -630,6 +691,10 @@ input::placeholder {
   display: block;
 }
 
+.align-end {
+  align-items: flex-end;
+}
+
 .success-banner,
 .error-banner {
   padding: 0.85rem 1rem;
@@ -673,6 +738,17 @@ td {
   color: #eef4fa;
 }
 
+.table-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 150px;
+}
+
+.table-actions select {
+  min-width: 140px;
+}
+
 @keyframes pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(88, 182, 255, 0.22);
@@ -691,6 +767,7 @@ td {
   .two-column,
   .three-column,
   .four-column,
+  .five-column,
   .hero-grid {
     grid-template-columns: 1fr;
   }

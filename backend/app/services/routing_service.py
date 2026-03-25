@@ -20,7 +20,8 @@ def rebuild_trip_route(db: Session, trip: Trip) -> None:
         [
             item
             for item in trip.trip_passengers
-            if item.ride_request is not None and item.status != PassengerStatus.DROPPED_OFF
+            if item.ride_request is not None
+            and item.status not in {PassengerStatus.DROPPED_OFF, PassengerStatus.NO_SHOW}
         ],
         key=lambda item: item.pickup_stop_index,
     )

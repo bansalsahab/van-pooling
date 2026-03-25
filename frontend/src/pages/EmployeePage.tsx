@@ -171,7 +171,9 @@ export function EmployeeDashboard() {
       setMessage(
         ride.trip_id
           ? `Ride assigned to ${ride.van_license_plate || "a van"} with live route tracking.`
-          : "Ride request submitted and waiting for assignment.",
+          : ride.scheduled_time
+            ? "Scheduled ride queued and waiting for its dispatch window."
+            : "Ride request submitted and waiting for assignment.",
       );
       await Promise.all([refresh(), refreshBrief()]);
     } catch (submissionError) {
@@ -252,6 +254,24 @@ export function EmployeeDashboard() {
     }
   }
 
+  async function handleCancelRide() {
+    if (!token || !activeRide) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await api.cancelRide(token, activeRide.id);
+      setMessage("Ride cancelled before pickup and capacity released.");
+      await Promise.all([refresh(), refreshBrief()]);
+    } catch (cancelError) {
+      setError(
+        cancelError instanceof Error ? cancelError.message : "Could not cancel the ride.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <AppLayout
       title="Employee Ride Desk"
@@ -319,6 +339,16 @@ export function EmployeeDashboard() {
                 label="Next stop"
                 value={activeRide.next_stop_address || "Awaiting next movement"}
               />
+              {isRideCancellable(activeRide.status) && (
+                <button
+                  className="ghost-button"
+                  disabled={busy}
+                  onClick={() => void handleCancelRide()}
+                  type="button"
+                >
+                  {busy ? "Cancelling..." : "Cancel before pickup"}
+                </button>
+              )}
             </div>
           ) : (
             <p className="muted-copy">
@@ -456,9 +486,13 @@ export function EmployeeDashboard() {
             </label>
             {(routePreview || activeRide) && (
               <div className="route-meta">
-                <InfoRow
+              <InfoRow
                   label="Route source"
-                  value={activeRide?.route_polyline ? "Active trip route" : routePreview?.source || "Preview"}
+                  value={
+                    activeRide?.route_polyline
+                      ? "Active trip route"
+                      : routePreview?.source || "Preview"
+                  }
                 />
                 <InfoRow
                   label="Distance"
@@ -651,4 +685,17 @@ function formatDistance(value?: number | null) {
 
 function formatCoordinate(value?: number | null) {
   return typeof value === "number" ? value.toFixed(6) : "";
+}
+
+function isRideCancellable(status: string) {
+  return [
+    "requested",
+    "matching",
+    "matched",
+    "driver_en_route",
+    "arrived_at_pickup",
+    "scheduled_requested",
+    "scheduled_queued",
+    "matching_at_dispatch_window",
+  ].includes(status);
 }

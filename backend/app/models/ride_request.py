@@ -12,14 +12,26 @@ from app.db_types import GeographyOrText, UUIDType
 class RideRequestStatus(str, enum.Enum):
     """Lifecycle states for a ride request."""
 
-    PENDING = "pending"
+    REQUESTED = "requested"
+    MATCHING = "matching"
     MATCHED = "matched"
-    DRIVER_ASSIGNED = "driver_assigned"
-    DRIVER_ENROUTE = "driver_enroute"
+    DRIVER_EN_ROUTE = "driver_en_route"
+    ARRIVED_AT_PICKUP = "arrived_at_pickup"
     PICKED_UP = "picked_up"
+    IN_TRANSIT = "in_transit"
+    ARRIVED_AT_DESTINATION = "arrived_at_destination"
+    DROPPED_OFF = "dropped_off"
     COMPLETED = "completed"
-    CANCELLED = "cancelled"
-    EXPIRED = "expired"
+    CANCELLED_BY_EMPLOYEE = "cancelled_by_employee"
+    CANCELLED_BY_ADMIN = "cancelled_by_admin"
+    NO_SHOW = "no_show"
+    REASSIGNED = "reassigned"
+    FAILED_NO_CAPACITY = "failed_no_capacity"
+    FAILED_DRIVER_UNREACHABLE = "failed_driver_unreachable"
+    FAILED_OPERATIONAL_ISSUE = "failed_operational_issue"
+    SCHEDULED_REQUESTED = "scheduled_requested"
+    SCHEDULED_QUEUED = "scheduled_queued"
+    MATCHING_AT_DISPATCH_WINDOW = "matching_at_dispatch_window"
 
 
 class RideRequest(Base):
@@ -36,7 +48,7 @@ class RideRequest(Base):
     destination_address = Column(Text, nullable=False)
     status = Column(
         Enum(RideRequestStatus, name="ride_request_status"),
-        default=RideRequestStatus.PENDING,
+        default=RideRequestStatus.REQUESTED,
         index=True,
     )
     scheduled_time = Column(TIMESTAMP)

@@ -46,3 +46,4 @@ class TripSummary(BaseModel):
     started_at: datetime | None = None
     created_at: datetime | None = None
     passenger_count: int = 0
+    passengers: list[TripPassengerSummary] = Field(default_factory=list)

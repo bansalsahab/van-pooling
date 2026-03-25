@@ -3,6 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.geo import parse_point
+from app.models.notification import Notification, NotificationStatus
 from app.models.ride_request import RideRequest, RideRequestStatus
 from app.models.trip import Trip, TripStatus
 from app.models.trip_passenger import TripPassenger
@@ -12,6 +13,7 @@ from app.schemas.dashboard import AdminDashboardSummary, DriverDashboardSummary
 from app.schemas.trip import DriverTripSummary, TripPassengerSummary, TripSummary
 from app.schemas.user import UserSummary
 from app.schemas.van import VanSummary
+from app.services.lifecycle_service import RIDE_PENDING_MATCH_STATUSES, RIDE_PENDING_SCHEDULED_STATUSES, TRIP_ACTIVE_STATUSES
 
 
 def serialize_van_summary(van: Van, driver_name: str | None = None) -> VanSummary:
@@ -68,7 +70,7 @@ def list_company_employees(db: Session, company_id) -> list[UserSummary]:
     ]
 
 
-def get_admin_dashboard(db: Session, company_id) -> AdminDashboardSummary:
+def get_admin_dashboard(db: Session, company_id, admin_user_id) -> AdminDashboardSummary:
     """Return the core admin metrics for a company."""
     employees_count = db.scalar(
         select(func.count(User.id)).where(
@@ -100,13 +102,21 @@ def get_admin_dashboard(db: Session, company_id) -> AdminDashboardSummary:
     pending_requests = db.scalar(
         select(func.count(RideRequest.id)).where(
             RideRequest.company_id == company_id,
-            RideRequest.status == RideRequestStatus.PENDING,
+            RideRequest.status.in_(
+                list(RIDE_PENDING_MATCH_STATUSES | RIDE_PENDING_SCHEDULED_STATUSES)
+            ),
         )
     ) or 0
     active_trips = db.scalar(
         select(func.count(Trip.id)).where(
             Trip.company_id == company_id,
-            Trip.status.in_([TripStatus.PLANNED, TripStatus.ACTIVE]),
+            Trip.status.in_(list(TRIP_ACTIVE_STATUSES)),
+        )
+    ) or 0
+    open_alerts = db.scalar(
+        select(func.count(Notification.id)).where(
+            Notification.user_id == admin_user_id,
+            Notification.status == NotificationStatus.PENDING,
         )
     ) or 0
 
@@ -119,6 +129,7 @@ def get_admin_dashboard(db: Session, company_id) -> AdminDashboardSummary:
         active_vans=active_vans,
         pending_requests=pending_requests,
         active_trips=active_trips,
+        open_alerts=open_alerts,
     )
 
 
@@ -134,7 +145,7 @@ def get_driver_dashboard(db: Session, driver: User) -> DriverDashboardSummary:
             select(Trip)
             .where(
                 Trip.van_id == van.id,
-                Trip.status.in_([TripStatus.PLANNED, TripStatus.ACTIVE]),
+                Trip.status.in_(list(TRIP_ACTIVE_STATUSES) + [TripStatus.PLANNED]),
             )
             .order_by(Trip.created_at.desc())
         ).first()
@@ -179,6 +190,22 @@ def serialize_trip_passenger(item: TripPassenger) -> TripPassengerSummary:
     )
 
 
+def serialize_trip_summary(trip: Trip) -> TripSummary:
+    """Convert a trip model into an admin-friendly summary."""
+    return TripSummary(
+        id=trip.id,
+        status=trip.status.value,
+        van_id=trip.van_id,
+        van_license_plate=trip.van.license_plate if trip.van else None,
+        route=trip.route or {},
+        estimated_duration_minutes=trip.estimated_duration_minutes,
+        started_at=trip.started_at,
+        created_at=trip.created_at,
+        passenger_count=len(trip.trip_passengers),
+        passengers=[serialize_trip_passenger(item) for item in trip.trip_passengers],
+    )
+
+
 def list_company_trips(db: Session, company_id) -> list[TripSummary]:
     """Return trips for the admin's company."""
     trips = db.scalars(
@@ -186,17 +213,4 @@ def list_company_trips(db: Session, company_id) -> list[TripSummary]:
         .where(Trip.company_id == company_id)
         .order_by(Trip.created_at.desc())
     ).all()
-    return [
-        TripSummary(
-            id=trip.id,
-            status=trip.status.value,
-            van_id=trip.van_id,
-            van_license_plate=trip.van.license_plate if trip.van else None,
-            route=trip.route or {},
-            estimated_duration_minutes=trip.estimated_duration_minutes,
-            started_at=trip.started_at,
-            created_at=trip.created_at,
-            passenger_count=len(trip.trip_passengers),
-        )
-        for trip in trips
-    ]
+    return [serialize_trip_summary(trip) for trip in trips]

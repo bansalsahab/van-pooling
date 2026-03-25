@@ -235,6 +235,13 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
         </>
       )}
 
+      {(statusMessage || shareError) && (
+        <div className="stack compact">
+          {statusMessage && <div className="success-banner">{statusMessage}</div>}
+          {shareError && <div className="error-banner">{shareError}</div>}
+        </div>
+      )}
+
       <div className="content-grid two-column">
         <section className="panel">
           <div className="panel-header">
@@ -362,8 +369,6 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
               />
             </div>
 
-            {statusMessage && <div className="success-banner">{statusMessage}</div>}
-            {shareError && <div className="error-banner">{shareError}</div>}
           </div>
         </section>
 
@@ -465,6 +470,26 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                       >
                         Drop off
                       </button>
+                      {["assigned", "notified"].includes(passenger.status) && (
+                        <button
+                          className="ghost-button"
+                          onClick={() =>
+                            token &&
+                            void runAction(
+                              () =>
+                                api.noShowPassenger(
+                                  token,
+                                  trip.id,
+                                  passenger.ride_request_id,
+                                ),
+                              `${passenger.passenger_name || "Passenger"} marked as no-show.`,
+                            )
+                          }
+                          type="button"
+                        >
+                          No-show
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -477,7 +502,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                     <div className="list-card compact-card route-step-card" key={`${step.instruction}-${index}`}>
                       <strong>{step.instruction}</strong>
                       <p>
-                        {formatDistance(step.distance_meters)} • {Math.max(1, Math.ceil(step.duration_seconds / 60))} min
+                        {formatDistance(step.distance_meters)} - {Math.max(1, Math.ceil(step.duration_seconds / 60))} min
                       </p>
                     </div>
                   ))}
@@ -503,7 +528,9 @@ function extractTargetCoordinates(route?: RoutePlan | null) {
     return null;
   }
 
-  const nextStop = route.pickup_sequence?.find((item) => item.status === "assigned");
+  const nextStop = route.pickup_sequence?.find((item) =>
+    ["assigned", "notified"].includes(item.status || ""),
+  );
   if (
     typeof nextStop?.pickup_latitude === "number" &&
     typeof nextStop?.pickup_longitude === "number"

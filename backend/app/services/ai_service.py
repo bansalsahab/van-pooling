@@ -17,6 +17,7 @@ from app.services.dashboard_service import (
     list_company_vans,
 )
 from app.services.admin_service import list_company_drivers
+from app.services.notification_service import list_admin_alerts
 from app.services.openai_service import create_structured_output
 from app.services.ride_service import get_active_ride
 
@@ -176,7 +177,14 @@ def build_employee_insights(db: Session, current_user: User) -> list[AIInsight]:
     if ride.estimated_wait_minutes is not None:
         signals.append(f"Estimated wait: {ride.estimated_wait_minutes} min")
 
-    if ride.status in {RideRequestStatus.PENDING.value, RideRequestStatus.MATCHED.value}:
+    if ride.status in {
+        RideRequestStatus.REQUESTED.value,
+        RideRequestStatus.MATCHING.value,
+        RideRequestStatus.MATCHED.value,
+        RideRequestStatus.SCHEDULED_REQUESTED.value,
+        RideRequestStatus.SCHEDULED_QUEUED.value,
+        RideRequestStatus.MATCHING_AT_DISPATCH_WINDOW.value,
+    }:
         return [
             AIInsight(
                 title="Pooling in progress",
@@ -190,7 +198,10 @@ def build_employee_insights(db: Session, current_user: User) -> list[AIInsight]:
             )
         ]
 
-    if ride.status in {RideRequestStatus.DRIVER_ASSIGNED.value, RideRequestStatus.DRIVER_ENROUTE.value}:
+    if ride.status in {
+        RideRequestStatus.DRIVER_EN_ROUTE.value,
+        RideRequestStatus.ARRIVED_AT_PICKUP.value,
+    }:
         freshness = (
             "Van location is live."
             if ride.van_last_location_update
@@ -247,7 +258,8 @@ def build_driver_insights(db: Session, current_user: User) -> list[AIInsight]:
 
     stale_location = (
         van.last_location_update is None
-        or van.last_location_update < datetime.utcnow() - timedelta(minutes=3)
+        or van.last_location_update
+        < datetime.utcnow() - timedelta(seconds=settings.VAN_STALE_ALERT_SECONDS)
     )
     if stale_location:
         insights.append(
@@ -284,9 +296,11 @@ def build_driver_insights(db: Session, current_user: User) -> list[AIInsight]:
         return insights
 
     pending_pickups = [
-        passenger for passenger in trip.passengers if passenger.status == "assigned"
+        passenger
+        for passenger in trip.passengers
+        if passenger.status in {"assigned", "notified"}
     ]
-    if trip.status == TripStatus.PLANNED.value:
+    if trip.status in {TripStatus.PLANNED.value, TripStatus.DISPATCH_READY.value}:
         insights.append(
             AIInsight(
                 title="Trip ready to launch",
@@ -324,10 +338,29 @@ def build_driver_insights(db: Session, current_user: User) -> list[AIInsight]:
 
 def build_admin_insights(db: Session, current_user: User) -> list[AIInsight]:
     """Suggest next-best actions for a fleet admin."""
-    dashboard = get_admin_dashboard(db, current_user.company_id)
+    dashboard = get_admin_dashboard(db, current_user.company_id, current_user.id)
     vans = list_company_vans(db, current_user.company_id)
     trips = list_company_trips(db, current_user.company_id)
+    alerts = list_admin_alerts(db, current_user)
     insights: list[AIInsight] = []
+
+    if alerts:
+        highest = alerts[0]
+        insights.append(
+            AIInsight(
+                title="Operational alerts need action",
+                summary=highest.message,
+                priority="high" if highest.severity == "high" else "normal",
+                recommended_actions=[
+                    "Review the alert queue and resolve stale or already-addressed items.",
+                    "Reassign trips or contact drivers if the alert points to service degradation.",
+                ],
+                signals=[
+                    f"Open alerts: {len(alerts)}",
+                    highest.title or "Operational alert",
+                ],
+            )
+        )
 
     if dashboard.pending_requests > dashboard.available_vans:
         insights.append(
@@ -352,7 +385,8 @@ def build_admin_insights(db: Session, current_user: User) -> list[AIInsight]:
         if van.status in {VanStatus.AVAILABLE.value, VanStatus.ON_TRIP.value}
         and (
             van.last_location_update is None
-            or van.last_location_update < datetime.utcnow() - timedelta(minutes=4)
+            or van.last_location_update
+            < datetime.utcnow() - timedelta(seconds=settings.VAN_STALE_ALERT_SECONDS)
         )
     ]
     if stale_vans:
@@ -372,7 +406,11 @@ def build_admin_insights(db: Session, current_user: User) -> list[AIInsight]:
             )
         )
 
-    planned_trips = [trip for trip in trips if trip.status == TripStatus.PLANNED.value]
+    planned_trips = [
+        trip
+        for trip in trips
+        if trip.status in {TripStatus.PLANNED.value, TripStatus.DISPATCH_READY.value}
+    ]
     if planned_trips:
         insights.append(
             AIInsight(
@@ -439,17 +477,19 @@ def _build_role_context(
             "openai_model": settings.OPENAI_MODEL,
         }
 
-    dashboard = get_admin_dashboard(db, current_user.company_id)
+    dashboard = get_admin_dashboard(db, current_user.company_id, current_user.id)
     vans = list_company_vans(db, current_user.company_id)
     trips = list_company_trips(db, current_user.company_id)
     drivers = list_company_drivers(db, current_user.company_id)
+    alerts = list_admin_alerts(db, current_user)
     stale_vans = [
         van.license_plate
         for van in vans
         if van.status in {VanStatus.AVAILABLE.value, VanStatus.ON_TRIP.value}
         and (
             van.last_location_update is None
-            or van.last_location_update < datetime.utcnow() - timedelta(minutes=4)
+            or van.last_location_update
+            < datetime.utcnow() - timedelta(seconds=settings.VAN_STALE_ALERT_SECONDS)
         )
     ]
     return {
@@ -461,6 +501,7 @@ def _build_role_context(
         "fleet": [item.model_dump(mode="json") for item in vans[:12]],
         "trips": [item.model_dump(mode="json") for item in trips[:12]],
         "drivers": [item.model_dump(mode="json") for item in drivers[:12]],
+        "alerts": [item.model_dump(mode="json") for item in alerts[:12]],
         "stale_vans": stale_vans,
         "insights": [item.model_dump(mode="json") for item in insights],
         "openai_model": settings.OPENAI_MODEL,

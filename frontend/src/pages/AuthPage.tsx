@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-import { useAuth } from "../state/auth";
 import type { UserProfile } from "../lib/types";
+import { useAuth } from "../state/auth";
 
 function defaultRoute(user: UserProfile) {
   if (user.role === "employee") return "/employee";
@@ -10,11 +10,65 @@ function defaultRoute(user: UserProfile) {
   return "/admin";
 }
 
+const ROLE_CONTENT: Record<
+  UserProfile["role"],
+  {
+    eyebrow: string;
+    cardTitle: string;
+    cardDescription: string;
+    formTitle: string;
+    formDescription: string;
+    loginEmailLabel: string;
+    loginEmailPlaceholder: string;
+    loginButton: string;
+    registerButton: string;
+  }
+> = {
+  employee: {
+    eyebrow: "Employee",
+    cardTitle: "Request and track pooled rides",
+    cardDescription: "Book commute trips, monitor live vans, and stay updated on your ride.",
+    formTitle: "Employee access",
+    formDescription:
+      "Sign in to request pooled rides, follow live vehicle updates, and manage your commute.",
+    loginEmailLabel: "Employee email",
+    loginEmailPlaceholder: "employee@company.com",
+    loginButton: "Enter Employee Desk",
+    registerButton: "Create Employee Account",
+  },
+  driver: {
+    eyebrow: "Driver",
+    cardTitle: "Run pickups, dropoffs, and status updates",
+    cardDescription: "Open the driver console, share location, and complete assigned routes.",
+    formTitle: "Driver access",
+    formDescription:
+      "Sign in to start trips, push vehicle location, and manage rider pickups.",
+    loginEmailLabel: "Driver email",
+    loginEmailPlaceholder: "driver@company.com",
+    loginButton: "Enter Driver Console",
+    registerButton: "Create Workspace Account",
+  },
+  admin: {
+    eyebrow: "Admin",
+    cardTitle: "Watch vans, trips, and team demand live",
+    cardDescription:
+      "Use the operations view to manage fleet readiness, trips, and dispatch.",
+    formTitle: "Admin access",
+    formDescription:
+      "Sign in to oversee the fleet, trips, live demand, and company operations.",
+    loginEmailLabel: "Admin email",
+    loginEmailPlaceholder: "admin@company.com",
+    loginButton: "Enter Command Center",
+    registerButton: "Create Admin Workspace",
+  },
+};
+
 export function AuthPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { login, register, user } = useAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
+  const [selectedRole, setSelectedRole] = useState<UserProfile["role"]>("employee");
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -31,6 +85,8 @@ export function AuthPage() {
       navigate(defaultRoute(user), { replace: true });
     }
   }, [user, navigate, location.pathname]);
+
+  const selectedRoleContent = ROLE_CONTENT[selectedRole];
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -70,22 +126,34 @@ export function AuthPage() {
           from a single control surface.
         </p>
         <div className="hero-grid">
-          <div className="metric-card accent">
-            <span>Employee</span>
-            <strong>Request and track pooled rides</strong>
-          </div>
-          <div className="metric-card">
-            <span>Driver</span>
-            <strong>Run pickups, dropoffs, and status updates</strong>
-          </div>
-          <div className="metric-card">
-            <span>Admin</span>
-            <strong>Watch vans, trips, and team demand live</strong>
-          </div>
+          {(Object.entries(ROLE_CONTENT) as Array<
+            [UserProfile["role"], (typeof ROLE_CONTENT)[UserProfile["role"]]]
+          >).map(([role, content]) => (
+            <button
+              className={`metric-card role-card ${selectedRole === role ? "selected" : ""}`}
+              key={role}
+              onClick={() => {
+                setSelectedRole(role);
+                setMode("login");
+                setError(null);
+              }}
+              type="button"
+            >
+              <span>{content.eyebrow}</span>
+              <strong>{content.cardTitle}</strong>
+              <p>{content.cardDescription}</p>
+            </button>
+          ))}
         </div>
       </section>
 
-      <section className="auth-card">
+      <section className={`auth-card auth-card-${selectedRole}`}>
+        <div className="auth-role-header">
+          <p className="eyebrow">{selectedRoleContent.eyebrow} Portal</p>
+          <h2>{selectedRoleContent.formTitle}</h2>
+          <p className="muted-copy">{selectedRoleContent.formDescription}</p>
+        </div>
+
         <div className="segment-control">
           <button
             className={mode === "login" ? "active" : ""}
@@ -119,30 +187,34 @@ export function AuthPage() {
           )}
 
           <label>
-            Work email
-              <input
-                type="email"
-                value={form.email}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, email: event.target.value }))
-                }
-                placeholder="you@company.com"
-                required
-              />
-            </label>
+            {mode === "login" ? selectedRoleContent.loginEmailLabel : "Work email"}
+            <input
+              type="email"
+              value={form.email}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, email: event.target.value }))
+              }
+              placeholder={
+                mode === "login"
+                  ? selectedRoleContent.loginEmailPlaceholder
+                  : "you@company.com"
+              }
+              required
+            />
+          </label>
 
           <label>
             Password
-              <input
-                type="password"
-                value={form.password}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, password: event.target.value }))
-                }
-                placeholder="Enter your password"
-                required
-              />
-            </label>
+            <input
+              type="password"
+              value={form.password}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, password: event.target.value }))
+              }
+              placeholder="Enter your password"
+              required
+            />
+          </label>
 
           {mode === "register" && (
             <>
@@ -150,9 +222,9 @@ export function AuthPage() {
                 Phone
                 <input
                   value={form.phone}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, phone: event.target.value }))
-                }
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, phone: event.target.value }))
+                  }
                   placeholder="+1 555 000 0000"
                 />
               </label>
@@ -191,7 +263,11 @@ export function AuthPage() {
           {error && <div className="error-banner">{error}</div>}
 
           <button className="primary-button" disabled={busy} type="submit">
-            {busy ? "Working..." : mode === "login" ? "Enter Workspace" : "Create Account"}
+            {busy
+              ? "Working..."
+              : mode === "login"
+                ? selectedRoleContent.loginButton
+                : selectedRoleContent.registerButton}
           </button>
         </form>
       </section>

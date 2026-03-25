@@ -1,10 +1,14 @@
 """Admin routes."""
+from uuid import UUID
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_roles
 from app.database import get_db
 from app.models.user import User, UserRole
+from app.schemas.admin_ops import OptionalReasonInput, TripReassignInput
+from app.schemas.alert import AlertSummary
 from app.schemas.dashboard import AdminDashboardSummary
 from app.schemas.trip import TripSummary
 from app.schemas.user import AdminUserCreate, UserSummary
@@ -14,12 +18,14 @@ from app.services.admin_service import (
     create_company_van,
     list_company_drivers,
 )
+from app.services.dispatch_ops_service import cancel_trip_by_admin, reassign_trip_van
 from app.services.dashboard_service import (
     get_admin_dashboard,
     list_company_employees,
     list_company_trips,
     list_company_vans,
 )
+from app.services.notification_service import list_admin_alerts, resolve_admin_alert
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -30,7 +36,7 @@ def dashboard(
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminDashboardSummary:
     """Return admin dashboard metrics."""
-    return get_admin_dashboard(db, current_user.company_id)
+    return get_admin_dashboard(db, current_user.company_id, current_user.id)
 
 
 @router.get("/vans", response_model=list[VanSummary])
@@ -67,6 +73,59 @@ def trips(
 ) -> list[TripSummary]:
     """Return trips for the admin's company."""
     return list_company_trips(db, current_user.company_id)
+
+
+@router.get("/alerts", response_model=list[AlertSummary])
+def alerts(
+    include_resolved: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AlertSummary]:
+    """Return operational alerts for the signed-in admin."""
+    return list_admin_alerts(db, current_user, include_resolved=include_resolved)
+
+
+@router.post("/alerts/{alert_id}/resolve", response_model=AlertSummary)
+def resolve_alert(
+    alert_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AlertSummary:
+    """Resolve an operational alert."""
+    return resolve_admin_alert(db, alert_id, current_user)
+
+
+@router.post("/trips/{trip_id}/reassign", response_model=TripSummary)
+def reassign_trip(
+    trip_id: UUID,
+    payload: TripReassignInput,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TripSummary:
+    """Move a trip to another van."""
+    return reassign_trip_van(
+        db,
+        current_user,
+        trip_id=trip_id,
+        target_van_id=payload.van_id,
+        reason=payload.reason,
+    )
+
+
+@router.post("/trips/{trip_id}/cancel", response_model=TripSummary)
+def cancel_trip(
+    trip_id: UUID,
+    payload: OptionalReasonInput,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TripSummary:
+    """Cancel a trip before riders are onboard."""
+    return cancel_trip_by_admin(
+        db,
+        current_user,
+        trip_id=trip_id,
+        reason=payload.reason,
+    )
 
 
 @router.post("/users", response_model=UserSummary)

@@ -11,6 +11,7 @@ from app.services.dashboard_service import (
     list_company_trips,
     list_company_vans,
 )
+from app.services.notification_service import list_admin_alerts
 from app.services.ride_service import get_active_ride, list_user_rides
 
 
@@ -44,7 +45,9 @@ def build_live_snapshot(db, current_user: User) -> dict:
         "role": current_user.role.value,
         "generated_at": generated_at,
         "data": {
-            "dashboard": _dump_model(get_admin_dashboard(db, current_user.company_id)),
+            "dashboard": _dump_model(
+                get_admin_dashboard(db, current_user.company_id, current_user.id)
+            ),
             "vans": [_dump_model(item) for item in list_company_vans(db, current_user.company_id)],
             "employees": [
                 _dump_model(item) for item in list_company_employees(db, current_user.company_id)
@@ -53,6 +56,7 @@ def build_live_snapshot(db, current_user: User) -> dict:
                 _dump_model(item) for item in list_company_drivers(db, current_user.company_id)
             ],
             "trips": [_dump_model(item) for item in list_company_trips(db, current_user.company_id)],
+            "alerts": [_dump_model(item) for item in list_admin_alerts(db, current_user)],
         },
         "insights": [_dump_model(item) for item in build_role_insights(db, current_user)],
     }

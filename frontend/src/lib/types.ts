@@ -151,6 +151,7 @@ export interface AdminDashboardSummary {
   active_vans: number;
   pending_requests: number;
   active_trips: number;
+  open_alerts: number;
 }
 
 export interface TripSummary {
@@ -163,6 +164,22 @@ export interface TripSummary {
   started_at?: string | null;
   created_at?: string | null;
   passenger_count: number;
+  passengers: TripPassengerSummary[];
+}
+
+export interface AlertSummary {
+  id: string;
+  title?: string | null;
+  message: string;
+  status: string;
+  severity: string;
+  kind: string;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  ride_id?: string | null;
+  trip_id?: string | null;
+  created_at?: string | null;
+  resolved_at?: string | null;
 }
 
 export interface AdminUserCreateInput {
@@ -247,6 +264,7 @@ export interface AdminLiveSnapshot {
     employees: UserProfile[];
     drivers: UserProfile[];
     trips: TripSummary[];
+    alerts: AlertSummary[];
   };
   insights: AIInsight[];
 }

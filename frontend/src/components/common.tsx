@@ -47,7 +47,7 @@ export function RideTable({ rides }: { rides: RideSummary[] }) {
         <tbody>
           {rides.map((ride) => (
             <tr key={ride.id}>
-              <td>{ride.status}</td>
+              <td>{ride.status.replaceAll("_", " ")}</td>
               <td>{ride.pickup_address}</td>
               <td>{ride.destination_address}</td>
               <td>{ride.van_license_plate || "Pending"}</td>

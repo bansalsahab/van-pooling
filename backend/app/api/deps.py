@@ -34,6 +34,8 @@ def _resolve_user_from_token(db: Session, token: str) -> User:
     try:
         payload = decode_token(token)
         user_id = payload.get("sub")
+        token_role = payload.get("role")
+        token_company_id = payload.get("company_id")
         if user_id is None:
             raise credentials_exception
     except (JWTError, ValueError) as exc:
@@ -41,6 +43,10 @@ def _resolve_user_from_token(db: Session, token: str) -> User:
 
     user = db.get(User, uuid.UUID(user_id))
     if user is None:
+        raise credentials_exception
+    if token_role and user.role.value != token_role:
+        raise credentials_exception
+    if token_company_id and str(user.company_id) != str(token_company_id):
         raise credentials_exception
     return user
 

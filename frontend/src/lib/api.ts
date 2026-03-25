@@ -1,4 +1,5 @@
 import type {
+  AlertSummary,
   AdminDashboardSummary,
   AdminUserCreateInput,
   AdminVanCreateInput,
@@ -114,6 +115,12 @@ export const api = {
   getLiveStreamUrl(token: string) {
     return `${API_BASE_URL}/live/stream?access_token=${encodeURIComponent(token)}`;
   },
+  getLiveWebSocketUrl(token: string) {
+    const url = new URL(`${API_BASE_URL}/live/ws`, window.location.origin);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.searchParams.set("access_token", token);
+    return url.toString();
+  },
   login(email: string, password: string) {
     return request<AuthResponse>("/auth/login", {
       method: "POST",
@@ -141,6 +148,12 @@ export const api = {
   },
   getActiveRide(token: string) {
     return request<RideSummary | null>("/rides/active", { token });
+  },
+  cancelRide(token: string, rideId: string) {
+    return request<RideSummary>(`/rides/${rideId}/cancel`, {
+      method: "POST",
+      token,
+    });
   },
   requestRide(
     token: string,
@@ -206,6 +219,15 @@ export const api = {
       token,
     });
   },
+  noShowPassenger(token: string, tripId: string, rideRequestId: string) {
+    return request<{ message: string }>(
+      `/driver/trips/${tripId}/no-show/${rideRequestId}`,
+      {
+        method: "POST",
+        token,
+      },
+    );
+  },
   getAdminDashboard(token: string) {
     return request<AdminDashboardSummary>("/admin/dashboard", { token });
   },
@@ -220,6 +242,33 @@ export const api = {
   },
   getAdminTrips(token: string) {
     return request<TripSummary[]>("/admin/trips", { token });
+  },
+  getAdminAlerts(token: string) {
+    return request<AlertSummary[]>("/admin/alerts", { token });
+  },
+  resolveAdminAlert(token: string, alertId: string) {
+    return request<AlertSummary>(`/admin/alerts/${alertId}/resolve`, {
+      method: "POST",
+      token,
+    });
+  },
+  reassignAdminTrip(
+    token: string,
+    tripId: string,
+    payload: { van_id: string; reason?: string },
+  ) {
+    return request<TripSummary>(`/admin/trips/${tripId}/reassign`, {
+      method: "POST",
+      token,
+      body: payload,
+    });
+  },
+  cancelAdminTrip(token: string, tripId: string, reason?: string) {
+    return request<TripSummary>(`/admin/trips/${tripId}/cancel`, {
+      method: "POST",
+      token,
+      body: { reason },
+    });
   },
   createAdminUser(token: string, payload: AdminUserCreateInput) {
     return request<UserProfile>("/admin/users", {

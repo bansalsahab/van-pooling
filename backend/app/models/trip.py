@@ -13,9 +13,14 @@ class TripStatus(str, enum.Enum):
     """Lifecycle states for trips."""
 
     PLANNED = "planned"
-    ACTIVE = "active"
+    DISPATCH_READY = "dispatch_ready"
+    ACTIVE_TO_PICKUP = "active_to_pickup"
+    ACTIVE_IN_TRANSIT = "active_in_transit"
+    ACTIVE_MIXED = "active_mixed"
     COMPLETED = "completed"
+    REASSIGNED = "reassigned"
     CANCELLED = "cancelled"
+    FAILED_OPERATIONAL_ISSUE = "failed_operational_issue"
 
 
 class Trip(Base):
