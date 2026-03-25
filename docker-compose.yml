@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: vanpool-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vanpool}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vanpool123}
+      POSTGRES_DB: ${POSTGRES_DB:-vanpool_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vanpool"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vanpool-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vanpool-backend
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-vanpool}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vanpool123}
+      POSTGRES_DB: ${POSTGRES_DB:-vanpool_db}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vanpool}:${POSTGRES_PASSWORD:-vanpool123}@postgres:5432/${POSTGRES_DB:-vanpool_db}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 15
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
+      GOOGLE_MAPS_BROWSER_API_KEY: ${GOOGLE_MAPS_BROWSER_API_KEY}
+      GOOGLE_MAPS_MAP_ID: ${GOOGLE_MAPS_MAP_ID}
+      GOOGLE_MAPS_REGION: ${GOOGLE_MAPS_REGION}
+      GOOGLE_MAPS_LANGUAGE: ${GOOGLE_MAPS_LANGUAGE}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL}
+      OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./database:/database:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - vanpool-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: vanpool-frontend
+    environment:
+      VITE_API_URL: http://localhost:8000/api/v1
+      VITE_GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_BROWSER_API_KEY}
+      VITE_GOOGLE_MAPS_MAP_ID: ${GOOGLE_MAPS_MAP_ID}
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    command: npm run dev
+    networks:
+      - vanpool-network
+
+volumes:
+  postgres_data:
+
+networks:
+  vanpool-network:
+    driver: bridge
