@@ -33,6 +33,15 @@ textarea {
   font: inherit;
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid rgba(88, 182, 255, 0.85);
+  outline-offset: 2px;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -352,6 +361,14 @@ input::placeholder {
   min-height: 100vh;
 }
 
+.primary-button:disabled,
+.secondary-button:disabled,
+.ghost-button:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .brand {
   display: flex;
   gap: 1rem;
@@ -400,6 +417,11 @@ input::placeholder {
   padding: 0.9rem 1rem;
   color: #bbcbdb;
   border-radius: 16px;
+}
+
+.nav-links a:hover {
+  background: rgba(88, 182, 255, 0.08);
+  color: #f4f8fb;
 }
 
 .nav-links a.active {
@@ -630,6 +652,23 @@ input::placeholder {
   margin: 0.35rem 0 0;
 }
 
+.copilot-health {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.8rem 0.95rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.copilot-health strong {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 1.05rem;
+}
+
 .ask-form {
   margin-top: 1rem;
 }
@@ -709,6 +748,16 @@ input::placeholder {
   color: #ffc09c;
 }
 
+.priority-pill.medium {
+  background: rgba(255, 211, 108, 0.18);
+  color: #ffe8a1;
+}
+
+.priority-pill.low {
+  background: rgba(86, 222, 147, 0.16);
+  color: #b3f5ce;
+}
+
 .signal-row {
   display: flex;
   gap: 0.45rem;
@@ -718,6 +767,12 @@ input::placeholder {
 .signal-pill {
   background: rgba(255, 255, 255, 0.08);
   color: #c8d8e7;
+}
+
+.quick-prompt {
+  text-align: left;
+  white-space: normal;
+  line-height: 1.35;
 }
 
 .action-list {
@@ -934,6 +989,23 @@ td {
   flex-direction: column;
   gap: 0.45rem;
   min-width: 150px;
+}
+
+.table-inline-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.inline-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem 0.7rem;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .table-actions select {

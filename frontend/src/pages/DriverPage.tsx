@@ -15,6 +15,10 @@ import {
 import { useCopilot } from "../hooks/useCopilot";
 import { useLiveStream } from "../hooks/useLiveStream";
 import { api } from "../lib/api";
+import {
+  buildGoogleMapsDirectionsUrl,
+  buildGoogleMapsSearchUrl,
+} from "../lib/mapsLinks";
 import type {
   AIInsight,
   DriverDashboardSummary,
@@ -59,6 +63,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
   const mapPolylines = buildRoutePolylines(trip?.route);
   const tripAccepted = Boolean(trip?.accepted_at);
   const tripStarted = Boolean(trip?.started_at);
+  const upcomingScheduledWork = dashboard?.upcoming_scheduled_work ?? [];
 
   useEffect(() => {
     if (
@@ -465,54 +470,41 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
               </div>
 
               <div className="stack compact">
-                {trip.passengers.map((passenger) => (
-                  <div className="list-card" key={passenger.ride_request_id}>
-                    <div>
-                      <strong>{passenger.passenger_name || "Passenger"}</strong>
-                      <p>{passenger.pickup_address}</p>
-                      <p>{passenger.destination_address}</p>
-                    </div>
-                    <div className="button-row wrap">
-                      <span className="status-pill">{passenger.status}</span>
-                      <button
-                        className="ghost-button"
-                        disabled={!tripStarted}
-                        onClick={() =>
-                          token &&
-                          void runAction(
-                            () =>
-                              api.pickupPassenger(
-                                token,
-                                trip.id,
-                                passenger.ride_request_id,
-                              ),
-                            `Picked up ${passenger.passenger_name || "passenger"}.`,
-                          )
-                        }
-                        type="button"
-                      >
-                        Pick up
-                      </button>
-                      <button
-                        className="ghost-button"
-                        disabled={!tripStarted}
-                        onClick={() =>
-                          token &&
-                          void runAction(
-                            () =>
-                              api.dropoffPassenger(
-                                token,
-                                trip.id,
-                                passenger.ride_request_id,
-                              ),
-                            `Dropped off ${passenger.passenger_name || "passenger"}.`,
-                          )
-                        }
-                        type="button"
-                      >
-                        Drop off
-                      </button>
-                      {["assigned", "notified"].includes(passenger.status) && (
+                {trip.passengers.map((passenger) => {
+                  const pickupMapUrl = buildGoogleMapsSearchUrl(passenger.pickup_address);
+                  const directionsUrl = buildGoogleMapsDirectionsUrl({
+                    origin: passenger.pickup_address,
+                    destination: passenger.destination_address,
+                  });
+                  return (
+                    <div className="list-card" key={passenger.ride_request_id}>
+                      <div>
+                        <strong>{passenger.passenger_name || "Passenger"}</strong>
+                        <p>{passenger.pickup_address}</p>
+                        <p>{passenger.destination_address}</p>
+                      </div>
+                      <div className="button-row wrap">
+                        <span className="status-pill">{passenger.status}</span>
+                        {pickupMapUrl && (
+                          <a
+                            className="ghost-button inline-link-button"
+                            href={pickupMapUrl}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            Pickup map
+                          </a>
+                        )}
+                        {directionsUrl && (
+                          <a
+                            className="ghost-button inline-link-button"
+                            href={directionsUrl}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            Directions
+                          </a>
+                        )}
                         <button
                           className="ghost-button"
                           disabled={!tripStarted}
@@ -520,22 +512,62 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                             token &&
                             void runAction(
                               () =>
-                                api.noShowPassenger(
+                                api.pickupPassenger(
                                   token,
                                   trip.id,
                                   passenger.ride_request_id,
                                 ),
-                              `${passenger.passenger_name || "Passenger"} marked as no-show.`,
+                              `Picked up ${passenger.passenger_name || "passenger"}.`,
                             )
                           }
                           type="button"
                         >
-                          No-show
+                          Pick up
                         </button>
-                      )}
+                        <button
+                          className="ghost-button"
+                          disabled={!tripStarted}
+                          onClick={() =>
+                            token &&
+                            void runAction(
+                              () =>
+                                api.dropoffPassenger(
+                                  token,
+                                  trip.id,
+                                  passenger.ride_request_id,
+                                ),
+                              `Dropped off ${passenger.passenger_name || "passenger"}.`,
+                            )
+                          }
+                          type="button"
+                        >
+                          Drop off
+                        </button>
+                        {["assigned", "notified"].includes(passenger.status) && (
+                          <button
+                            className="ghost-button"
+                            disabled={!tripStarted}
+                            onClick={() =>
+                              token &&
+                              void runAction(
+                                () =>
+                                  api.noShowPassenger(
+                                    token,
+                                    trip.id,
+                                    passenger.ride_request_id,
+                                  ),
+                                `${passenger.passenger_name || "Passenger"} marked as no-show.`,
+                              )
+                            }
+                            type="button"
+                          >
+                            No-show
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {trip.route?.steps?.length > 0 && (
@@ -560,6 +592,83 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
           )}
         </section>
       </div>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Scheduled Workload</p>
+            <h3>Upcoming assigned pickups</h3>
+          </div>
+        </div>
+        {upcomingScheduledWork.length === 0 ? (
+          <p className="muted-copy">
+            No scheduled assignments are waiting right now.
+          </p>
+        ) : (
+          <div className="stack compact">
+            {upcomingScheduledWork.map((item) => {
+              const pickupMapUrl = buildGoogleMapsSearchUrl(item.pickup_address);
+              const directionsUrl = buildGoogleMapsDirectionsUrl({
+                origin: item.pickup_address,
+                destination: item.destination_address,
+              });
+              return (
+                <div className="list-card compact-card" key={item.ride_id}>
+                  <div>
+                    <strong>{item.passenger_name || `Ride ${item.ride_id.slice(0, 8)}`}</strong>
+                    <p>
+                      {item.pickup_address}
+                      {" -> "}
+                      {item.destination_address}
+                    </p>
+                    <p>
+                      {item.assignment_timing_note ||
+                        item.delay_explanation ||
+                        "Assignment timing is being updated."}
+                    </p>
+                    <div className="button-row">
+                      {pickupMapUrl && (
+                        <a
+                          className="ghost-button inline-link-button"
+                          href={pickupMapUrl}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          Pickup map
+                        </a>
+                      )}
+                      {directionsUrl && (
+                        <a
+                          className="ghost-button inline-link-button"
+                          href={directionsUrl}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          Directions
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                  <div className="stack compact align-end">
+                    <span className="status-pill">
+                      {item.schedule_phase?.replaceAll("_", " ") || "scheduled"}
+                    </span>
+                    <span className="status-pill">{item.ride_status.replaceAll("_", " ")}</span>
+                    <span className="muted-copy">
+                      {item.scheduled_time
+                        ? `Pickup ${formatDateTime(item.scheduled_time)}`
+                        : "Pickup time pending"}
+                    </span>
+                    <span className="muted-copy">
+                      {formatScheduledCountdown(item.minutes_until_pickup, item.minutes_until_dispatch_window)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <div className="content-grid two-column">
         {!operationsOnly ? (
@@ -781,4 +890,35 @@ function parseCoordinateInput(value: string) {
   }
   const numeric = Number(normalized);
   return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatScheduledCountdown(
+  minutesUntilPickup?: number | null,
+  minutesUntilDispatchWindow?: number | null,
+) {
+  if (typeof minutesUntilPickup === "number") {
+    if (minutesUntilPickup > 0) {
+      return `${minutesUntilPickup} min until pickup`;
+    }
+    if (minutesUntilPickup === 0) {
+      return "Pickup window is now";
+    }
+    return `${Math.abs(minutesUntilPickup)} min past pickup window`;
+  }
+  if (
+    typeof minutesUntilDispatchWindow === "number" &&
+    minutesUntilDispatchWindow > 0
+  ) {
+    return `Dispatch starts in ${minutesUntilDispatchWindow} min`;
+  }
+  return "Dispatch timing in progress";
 }

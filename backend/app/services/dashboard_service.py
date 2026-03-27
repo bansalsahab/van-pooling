@@ -1,5 +1,7 @@
 """Dashboard and fleet service helpers."""
-from sqlalchemy import func, select
+from datetime import datetime
+
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.geo import parse_point
@@ -8,12 +10,25 @@ from app.models.trip import Trip, TripStatus
 from app.models.trip_passenger import TripPassenger
 from app.models.user import User, UserRole
 from app.models.van import Van, VanStatus
-from app.schemas.dashboard import AdminDashboardSummary, DriverDashboardSummary
+from app.schemas.dashboard import (
+    AdminDashboardSummary,
+    DriverDashboardSummary,
+    DriverScheduledWorkSummary,
+)
 from app.schemas.trip import DriverTripSummary, TripPassengerSummary, TripSummary
 from app.schemas.user import UserSummary
 from app.schemas.van import VanSummary
+from app.services.ride_service import serialize_ride_request
 from app.services.lifecycle_service import RIDE_PENDING_MATCH_STATUSES, RIDE_PENDING_SCHEDULED_STATUSES, TRIP_ACTIVE_STATUSES
 from app.services.notification_service import count_open_alerts
+
+
+DRIVER_SCHEDULED_WORK_STATUSES = {
+    RideRequestStatus.MATCHED,
+    RideRequestStatus.DRIVER_EN_ROUTE,
+    RideRequestStatus.ARRIVED_AT_PICKUP,
+}
+ADMIN_DISPATCH_BOARD_STATUSES = RIDE_PENDING_MATCH_STATUSES | RIDE_PENDING_SCHEDULED_STATUSES
 
 
 def serialize_van_summary(van: Van, driver_name: str | None = None) -> VanSummary:
@@ -102,8 +117,12 @@ def get_admin_dashboard(db: Session, company_id, admin_user_id) -> AdminDashboar
     pending_requests = db.scalar(
         select(func.count(RideRequest.id)).where(
             RideRequest.company_id == company_id,
-            RideRequest.status.in_(
-                list(RIDE_PENDING_MATCH_STATUSES | RIDE_PENDING_SCHEDULED_STATUSES)
+            or_(
+                RideRequest.status.in_(list(ADMIN_DISPATCH_BOARD_STATUSES)),
+                and_(
+                    RideRequest.scheduled_time.is_not(None),
+                    RideRequest.status.in_(list(DRIVER_SCHEDULED_WORK_STATUSES)),
+                ),
             ),
         )
     ) or 0
@@ -134,6 +153,7 @@ def get_driver_dashboard(db: Session, driver: User) -> DriverDashboardSummary:
     van = db.scalar(select(Van).where(Van.driver_id == driver.id))
     active_trip = None
     van_summary = None
+    upcoming_scheduled_work: list[DriverScheduledWorkSummary] = []
 
     if van is not None:
         van_summary = serialize_van_summary(van, driver.name)
@@ -147,13 +167,72 @@ def get_driver_dashboard(db: Session, driver: User) -> DriverDashboardSummary:
         ).first()
         if trip is not None:
             active_trip = serialize_driver_trip(trip)
+        upcoming_scheduled_work = _list_driver_upcoming_scheduled_work(db, driver, van.id)
 
     return DriverDashboardSummary(
         driver_id=driver.id,
         driver_name=driver.name,
         van=van_summary,
         active_trip=active_trip,
+        upcoming_scheduled_work=upcoming_scheduled_work,
     )
+
+
+def _list_driver_upcoming_scheduled_work(
+    db: Session,
+    driver: User,
+    van_id,
+) -> list[DriverScheduledWorkSummary]:
+    assignments = db.scalars(
+        select(TripPassenger)
+        .join(Trip, TripPassenger.trip_id == Trip.id)
+        .join(RideRequest, TripPassenger.ride_request_id == RideRequest.id)
+        .where(
+            Trip.company_id == driver.company_id,
+            Trip.van_id == van_id,
+            RideRequest.scheduled_time.is_not(None),
+            RideRequest.status.in_(list(DRIVER_SCHEDULED_WORK_STATUSES)),
+        )
+        .order_by(
+            RideRequest.scheduled_time.asc(),
+            desc(Trip.created_at),
+        )
+        .limit(8)
+    ).all()
+
+    now = datetime.utcnow()
+    results: list[DriverScheduledWorkSummary] = []
+    for assignment in assignments:
+        ride = assignment.ride_request
+        if ride is None:
+            continue
+        ride_summary = serialize_ride_request(ride)
+        if ride_summary.minutes_until_pickup is not None and ride_summary.minutes_until_pickup < -30:
+            continue
+        results.append(
+            DriverScheduledWorkSummary(
+                ride_id=ride.id,
+                trip_id=assignment.trip_id,
+                ride_status=ride.status.value,
+                pickup_address=ride.pickup_address,
+                destination_address=ride.destination_address,
+                scheduled_time=ride_summary.scheduled_time,
+                dispatch_window_opens_at=ride_summary.dispatch_window_opens_at,
+                minutes_until_dispatch_window=ride_summary.minutes_until_dispatch_window,
+                minutes_until_pickup=ride_summary.minutes_until_pickup,
+                schedule_phase=ride_summary.schedule_phase,
+                assignment_timing_note=ride_summary.assignment_timing_note,
+                delay_explanation=(
+                    ride_summary.delay_explanation
+                    if ride_summary.delay_explanation is not None
+                    else f"Scheduled pickup in {max(0, int((ride.scheduled_time - now).total_seconds() // 60))} min."
+                    if ride.scheduled_time is not None
+                    else None
+                ),
+                passenger_name=assignment.user.name if assignment.user else None,
+            )
+        )
+    return results
 
 
 def serialize_driver_trip(trip: Trip) -> DriverTripSummary:

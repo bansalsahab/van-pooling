@@ -9,10 +9,16 @@ from sqlalchemy import inspect, select, text
 
 from app.core.config import settings
 from app.database import SessionLocal, engine
+from app.models.notification import Notification, NotificationStatus, NotificationType
 from app.models.ride_request import RideRequest, RideRequestStatus
 from app.models.trip import TripStatus
+from app.models.user import User, UserRole
 from app.services.lifecycle_service import LEGACY_RIDE_STATUS_MAP, LEGACY_TRIP_STATUS_MAP
-from app.services.notification_service import create_admin_alert
+from app.services.notification_service import (
+    create_admin_alert_once,
+    queue_notification_once,
+    resolve_stale_dispatch_alerts,
+)
 from app.services.ride_service import attempt_match_ride, fail_ride_request
 
 
@@ -160,6 +166,7 @@ def process_dispatch_cycle() -> None:
 def _process_dispatch_cycle(db) -> None:
     now = datetime.utcnow()
     cutoff_seconds = settings.MATCHING_AGGREGATION_WINDOW_SECONDS + settings.MATCHING_RECOVERY_GRACE_SECONDS
+    touched_company_ids = set()
 
     immediate_rides = db.scalars(
         select(RideRequest).where(
@@ -172,6 +179,7 @@ def _process_dispatch_cycle(db) -> None:
         )
     ).all()
     for ride in immediate_rides:
+        touched_company_ids.add(ride.company_id)
         ride_age = (now - (ride.requested_at or now)).total_seconds()
         if ride_age > cutoff_seconds:
             fail_ride_request(
@@ -199,6 +207,7 @@ def _process_dispatch_cycle(db) -> None:
         )
     ).all()
     for ride in scheduled_rides:
+        touched_company_ids.add(ride.company_id)
         previous_status = ride.status
         if ride.scheduled_time is None:
             fail_ride_request(
@@ -232,16 +241,90 @@ def _process_dispatch_cycle(db) -> None:
             )
             continue
 
+        entering_dispatch_window = previous_status in {
+            RideRequestStatus.SCHEDULED_REQUESTED,
+            RideRequestStatus.SCHEDULED_QUEUED,
+        }
+        if entering_dispatch_window and ride.user_id is not None:
+            queue_notification_once(
+                db,
+                ride.user_id,
+                title="Scheduled ride dispatch started",
+                message=(
+                    "Your scheduled ride is now inside its dispatch window and "
+                    "the matcher is looking for an eligible van."
+                ),
+                metadata={"ride_id": str(ride.id), "scheduled_time": ride.scheduled_time.isoformat()},
+                dedupe_key=f"scheduled-window-open:{ride.id}",
+            )
+
         matched = attempt_match_ride(db, ride)
-        if not matched and now >= alert_threshold and previous_status != RideRequestStatus.MATCHING_AT_DISPATCH_WINDOW:
-            create_admin_alert(
+        if matched:
+            continue
+
+        if entering_dispatch_window:
+            create_admin_alert_once(
                 db,
                 ride.company_id,
-                title="Scheduled ride needs intervention",
-                message="A scheduled ride is inside its dispatch window and still has no assigned van.",
-                severity="high",
-                metadata={"ride_id": str(ride.id), "scheduled_time": ride.scheduled_time.isoformat()},
+                title="Scheduled dispatch window opened",
+                message="A scheduled ride just entered its dispatch window and is now matching.",
+                severity="medium",
+                metadata={
+                    "ride_id": str(ride.id),
+                    "scheduled_time": ride.scheduled_time.isoformat(),
+                    "entity_type": "ride",
+                    "entity_id": str(ride.id),
+                },
+                dedupe_key=f"scheduled-window-open:{ride.id}",
             )
+
+        if now < alert_threshold:
+            continue
+
+        create_admin_alert_once(
+            db,
+            ride.company_id,
+            title="Scheduled ride needs intervention",
+            message="A scheduled ride is inside its dispatch window and still has no assigned van.",
+            severity="high",
+            metadata={
+                "ride_id": str(ride.id),
+                "scheduled_time": ride.scheduled_time.isoformat(),
+                "entity_type": "ride",
+                "entity_id": str(ride.id),
+            },
+            dedupe_key=f"scheduled-at-risk:{ride.id}",
+        )
+        if ride.user_id is not None:
+            queue_notification_once(
+                db,
+                ride.user_id,
+                title="Scheduled ride still matching",
+                message=(
+                    "Your pickup window is close and dispatch is still matching. "
+                    "The operations team has been alerted."
+                ),
+                metadata={
+                    "ride_id": str(ride.id),
+                    "scheduled_time": ride.scheduled_time.isoformat(),
+                },
+                dedupe_key=f"scheduled-at-risk:{ride.id}",
+            )
+
+    alert_company_ids = db.scalars(
+        select(User.company_id)
+        .join(Notification, Notification.user_id == User.id)
+        .where(
+            User.role == UserRole.ADMIN,
+            Notification.type == NotificationType.PUSH,
+            Notification.status == NotificationStatus.PENDING,
+        )
+        .distinct()
+    ).all()
+    touched_company_ids.update(company_id for company_id in alert_company_ids if company_id is not None)
+
+    for company_id in touched_company_ids:
+        resolve_stale_dispatch_alerts(db, company_id)
 
 
 async def dispatch_worker_loop(stop_event: asyncio.Event) -> None:

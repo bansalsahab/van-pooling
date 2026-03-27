@@ -13,6 +13,7 @@ Full-stack van pooling platform for employees, drivers, and fleet operators. The
 - Admin endpoints and forms for dashboard metrics, vans, employees, drivers, and trips
 - Google Maps-powered route previews and live map surfaces across employee, driver, and admin views
 - OpenAI-powered copilot briefings and role-aware operator Q&A
+- Grounded AI copilot signals: health score, confidence level, evidence signals, and one-click quick prompts
 - Docker Compose stack for frontend, backend, and PostGIS
 
 ## Product direction
@@ -58,6 +59,39 @@ If Docker is unavailable, the backend now defaults to a local SQLite database.
 1. Create a virtual environment and install backend packages.
 2. Run [run-local.ps1](C:\Users\Parth bansal\Desktop\van-pooling-platform\run-local.ps1)
 3. Stop services with [stop-local.ps1](C:\Users\Parth bansal\Desktop\van-pooling-platform\stop-local.ps1)
+
+## Database migrations (Alembic)
+
+The backend now uses Alembic as the canonical schema workflow.
+
+- Startup auto-upgrades schema when `AUTO_RUN_MIGRATIONS=true` (default).
+- Manual migration command:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe -m scripts.migrate
+```
+
+- Create a new revision after model changes:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe_change"
+```
+
+- Apply pending revisions:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+- Use a temporary database URL during migration generation/testing:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe -m alembic -x db_url=sqlite:///./temp_migration.db upgrade head
+```
 
 ## API summary
 
@@ -130,3 +164,8 @@ Sample demo data is available in `database/seeds/` and can be loaded with the se
 2. Expand rider and admin notification delivery using the existing notification schema.
 3. Add automated tests across backend routes and frontend role workflows.
 4. Add richer admin dispatch controls such as manual reassignment and service-zone editing.
+
+## Execution handoff docs
+
+- [stages-roadmap.md](C:\Users\Parth bansal\Desktop\van-pooling-platform\stages-roadmap.md)
+- [agent-build-playbook.md](C:\Users\Parth bansal\Desktop\van-pooling-platform\agent-build-playbook.md)

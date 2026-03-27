@@ -118,6 +118,12 @@ export interface RideSummary {
   pickup_address: string;
   destination_address: string;
   scheduled_time?: string | null;
+  dispatch_window_opens_at?: string | null;
+  minutes_until_dispatch_window?: number | null;
+  minutes_until_pickup?: number | null;
+  schedule_phase?: string | null;
+  assignment_timing_note?: string | null;
+  delay_explanation?: string | null;
   requested_at?: string | null;
   estimated_wait_minutes?: number | null;
   estimated_cost?: string | number | null;
@@ -185,11 +191,28 @@ export interface DriverTripSummary {
   passengers: TripPassengerSummary[];
 }
 
+export interface DriverScheduledWorkSummary {
+  ride_id: string;
+  trip_id: string;
+  ride_status: string;
+  pickup_address: string;
+  destination_address: string;
+  scheduled_time?: string | null;
+  dispatch_window_opens_at?: string | null;
+  minutes_until_dispatch_window?: number | null;
+  minutes_until_pickup?: number | null;
+  schedule_phase?: string | null;
+  assignment_timing_note?: string | null;
+  delay_explanation?: string | null;
+  passenger_name?: string | null;
+}
+
 export interface DriverDashboardSummary {
   driver_id: string;
   driver_name: string;
   van?: VanSummary | null;
   active_trip?: DriverTripSummary | null;
+  upcoming_scheduled_work: DriverScheduledWorkSummary[];
 }
 
 export interface AdminDashboardSummary {
@@ -298,9 +321,13 @@ export interface CopilotBrief {
   headline: string;
   summary: string;
   urgency: "low" | "medium" | "high";
+  confidence: "low" | "medium" | "high";
+  health_score: number;
   priorities: string[];
   recommended_actions: string[];
   operational_notes: string[];
+  source_signals: string[];
+  quick_prompts: string[];
   rider_message?: string | null;
   generated_at: string;
   generated_by: "openai" | "fallback";
@@ -311,6 +338,7 @@ export interface CopilotReply {
   answer: string;
   action_items: string[];
   caution?: string | null;
+  source_signals: string[];
   generated_at: string;
   generated_by: "openai" | "fallback";
   model?: string | null;

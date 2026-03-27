@@ -84,7 +84,7 @@ def pending_requests(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[AdminPendingRideSummary]:
-    """Return unmatched or queued ride requests for the admin's company."""
+    """Return dispatch-board ride requests for the admin's company."""
     return list_company_pending_requests(db, current_user.company_id)
 
 

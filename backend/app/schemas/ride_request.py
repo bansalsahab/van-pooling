@@ -31,6 +31,12 @@ class RideRequestSummary(BaseModel):
     pickup_address: str
     destination_address: str
     scheduled_time: datetime | None = None
+    dispatch_window_opens_at: datetime | None = None
+    minutes_until_dispatch_window: int | None = None
+    minutes_until_pickup: int | None = None
+    schedule_phase: str | None = None
+    assignment_timing_note: str | None = None
+    delay_explanation: str | None = None
     requested_at: datetime | None = None
     estimated_wait_minutes: int | None = None
     estimated_cost: Decimal | None = None

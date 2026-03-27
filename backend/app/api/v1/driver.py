@@ -25,7 +25,7 @@ from app.services.audit_service import record_dispatch_event
 from app.services.dispatch_ops_service import mark_passenger_no_show
 from app.services.dashboard_service import get_driver_dashboard, serialize_driver_trip
 from app.services.lifecycle_service import TRIP_ACTIVE_STATUSES, close_trip, synchronize_trip_lifecycle
-from app.services.notification_service import queue_notification
+from app.services.notification_service import queue_notification_once
 from app.services.routing_service import rebuild_trip_route
 
 router = APIRouter(prefix="/driver", tags=["driver"])
@@ -72,13 +72,81 @@ def _get_latest_driver_trip(db: Session, van_id) -> Trip | None:
     ).first()
 
 
-def _sync_trip_progress_from_location(trip: Trip, latitude: float, longitude: float) -> None:
+def _ride_event_name_for_status(status: RideRequestStatus) -> str:
+    return {
+        RideRequestStatus.DRIVER_EN_ROUTE: "ride.driver_en_route",
+        RideRequestStatus.ARRIVED_AT_PICKUP: "ride.arrived_at_pickup",
+        RideRequestStatus.PICKED_UP: "ride.picked_up",
+        RideRequestStatus.ARRIVED_AT_DESTINATION: "ride.arrived_at_destination",
+        RideRequestStatus.DROPPED_OFF: "ride.dropped_off",
+    }.get(status, "ride.status_changed")
+
+
+def _notify_ride_transition(
+    db: Session,
+    assignment: TripPassenger,
+    next_status: RideRequestStatus,
+) -> None:
+    if assignment.user_id is None:
+        return
+    if next_status == RideRequestStatus.DRIVER_EN_ROUTE:
+        queue_notification_once(
+            db,
+            assignment.user_id,
+            title="Driver is on the way",
+            message="Your driver is now en route to your pickup location.",
+            metadata={
+                "ride_id": str(assignment.ride_request_id),
+                "trip_id": str(assignment.trip_id),
+            },
+            dedupe_key=f"ride-transition:{assignment.ride_request_id}:{next_status.value}",
+        )
+        return
+    if next_status == RideRequestStatus.ARRIVED_AT_PICKUP:
+        queue_notification_once(
+            db,
+            assignment.user_id,
+            title="Driver arrived at pickup",
+            message="Your driver has reached your pickup point.",
+            metadata={
+                "ride_id": str(assignment.ride_request_id),
+                "trip_id": str(assignment.trip_id),
+            },
+            dedupe_key=f"ride-transition:{assignment.ride_request_id}:{next_status.value}",
+        )
+        return
+    if next_status == RideRequestStatus.ARRIVED_AT_DESTINATION:
+        queue_notification_once(
+            db,
+            assignment.user_id,
+            title="Approaching destination",
+            message="Your van has reached the destination area and dropoff is in progress.",
+            metadata={
+                "ride_id": str(assignment.ride_request_id),
+                "trip_id": str(assignment.trip_id),
+            },
+            dedupe_key=f"ride-transition:{assignment.ride_request_id}:{next_status.value}",
+        )
+
+
+def _sync_trip_progress_from_location(
+    trip: Trip,
+    latitude: float,
+    longitude: float,
+) -> tuple[
+    list[tuple[TripPassenger, RideRequestStatus, RideRequestStatus]],
+    str,
+    str,
+]:
     """Advance ride progress automatically when the van reaches pickup or drop-off zones."""
     threshold = settings.DRIVER_ARRIVAL_THRESHOLD_METERS
+    transitions: list[tuple[TripPassenger, RideRequestStatus, RideRequestStatus]] = []
+    previous_trip_status = trip.status.value
     for assignment in trip.trip_passengers:
         if assignment.ride_request is None:
             continue
 
+        previous_ride_status = assignment.ride_request.status
         if assignment.status in {PassengerStatus.ASSIGNED, PassengerStatus.NOTIFIED}:
             pickup_coordinates = parse_point(assignment.ride_request.pickup_location)
             if pickup_coordinates is None:
@@ -98,9 +166,14 @@ def _sync_trip_progress_from_location(trip: Trip, latitude: float, longitude: fl
                 RideRequestStatus.MATCHING,
             }:
                 assignment.ride_request.status = RideRequestStatus.DRIVER_EN_ROUTE
+            if assignment.ride_request.status != previous_ride_status:
+                transitions.append(
+                    (assignment, previous_ride_status, assignment.ride_request.status)
+                )
             continue
 
         if assignment.status == PassengerStatus.PICKED_UP:
+            previous_ride_status = assignment.ride_request.status
             destination_coordinates = parse_point(assignment.ride_request.destination)
             if destination_coordinates is None:
                 continue
@@ -112,8 +185,13 @@ def _sync_trip_progress_from_location(trip: Trip, latitude: float, longitude: fl
             )
             if distance <= threshold:
                 assignment.ride_request.status = RideRequestStatus.ARRIVED_AT_DESTINATION
+            if assignment.ride_request.status != previous_ride_status:
+                transitions.append(
+                    (assignment, previous_ride_status, assignment.ride_request.status)
+                )
 
     synchronize_trip_lifecycle(trip)
+    return transitions, previous_trip_status, trip.status.value
 
 
 @router.get("/dashboard", response_model=DriverDashboardSummary)
@@ -160,7 +238,38 @@ def update_location(
 
     trip = _get_latest_driver_trip(db, van.id)
     if trip is not None:
-        _sync_trip_progress_from_location(trip, payload.latitude, payload.longitude)
+        transitions, previous_trip_status, current_trip_status = _sync_trip_progress_from_location(
+            trip,
+            payload.latitude,
+            payload.longitude,
+        )
+        for assignment, previous_ride_status, next_ride_status in transitions:
+            record_dispatch_event(
+                db,
+                company_id=current_user.company_id,
+                event_type=_ride_event_name_for_status(next_ride_status),
+                actor_type=current_user.role.value,
+                actor_user_id=current_user.id,
+                ride_id=assignment.ride_request_id,
+                trip_id=trip.id,
+                from_state=previous_ride_status.value,
+                to_state=next_ride_status.value,
+                metadata={"auto_transition": True, "source": "driver.location_update"},
+            )
+            _notify_ride_transition(db, assignment, next_ride_status)
+
+        if current_trip_status != previous_trip_status:
+            record_dispatch_event(
+                db,
+                company_id=current_user.company_id,
+                event_type="trip.status_changed",
+                actor_type=current_user.role.value,
+                actor_user_id=current_user.id,
+                trip_id=trip.id,
+                from_state=previous_trip_status,
+                to_state=current_trip_status,
+                metadata={"auto_transition": True, "source": "driver.location_update"},
+            )
         rebuild_trip_route(db, trip)
         db.add(trip)
 
@@ -244,7 +353,7 @@ def _notify_trip_acceptance(db: Session, trip: Trip) -> None:
     for assignment in trip.trip_passengers:
         if assignment.ride_request is None or assignment.user_id is None:
             continue
-        queue_notification(
+        queue_notification_once(
             db,
             assignment.user_id,
             title="Driver confirmed your ride",
@@ -255,6 +364,7 @@ def _notify_trip_acceptance(db: Session, trip: Trip) -> None:
                 "trip_id": str(trip.id),
                 "ride_id": str(assignment.ride_request_id),
             },
+            dedupe_key=f"trip-accepted:{trip.id}:{assignment.ride_request_id}",
         )
 
 
@@ -307,6 +417,7 @@ def pickup_passenger(
 ) -> MessageResponse:
     """Mark a passenger as picked up."""
     trip = _get_driver_trip_or_404(db, current_user, trip_id)
+    previous_trip_status = trip.status.value
     _ensure_trip_started(trip)
     assignment = db.scalar(
         select(TripPassenger).where(
@@ -340,6 +451,31 @@ def pickup_passenger(
         to_state=assignment.ride_request.status.value,
         metadata={"passenger_name": assignment.user.name if assignment.user else None},
     )
+    if trip.status.value != previous_trip_status:
+        record_dispatch_event(
+            db,
+            company_id=current_user.company_id,
+            event_type="trip.status_changed",
+            actor_type=current_user.role.value,
+            actor_user_id=current_user.id,
+            ride_id=assignment.ride_request_id,
+            trip_id=trip.id,
+            from_state=previous_trip_status,
+            to_state=trip.status.value,
+            metadata={"source": "driver.pickup"},
+        )
+    if assignment.user_id is not None:
+        queue_notification_once(
+            db,
+            assignment.user_id,
+            title="Pickup confirmed",
+            message="Your driver confirmed pickup and the ride is now in transit.",
+            metadata={
+                "ride_id": str(assignment.ride_request_id),
+                "trip_id": str(trip.id),
+            },
+            dedupe_key=f"ride-transition:{assignment.ride_request_id}:{RideRequestStatus.PICKED_UP.value}",
+        )
     db.add_all([assignment, assignment.ride_request, trip])
     db.commit()
     return MessageResponse(message="Passenger marked as picked up.")
@@ -354,6 +490,7 @@ def dropoff_passenger(
 ) -> MessageResponse:
     """Mark a passenger as dropped off."""
     trip = _get_driver_trip_or_404(db, current_user, trip_id)
+    previous_trip_status = trip.status.value
     _ensure_trip_started(trip)
     assignment = db.scalar(
         select(TripPassenger).where(
@@ -391,6 +528,31 @@ def dropoff_passenger(
         to_state=assignment.ride_request.status.value,
         metadata={"passenger_name": assignment.user.name if assignment.user else None},
     )
+    if trip.status.value != previous_trip_status:
+        record_dispatch_event(
+            db,
+            company_id=current_user.company_id,
+            event_type="trip.status_changed",
+            actor_type=current_user.role.value,
+            actor_user_id=current_user.id,
+            ride_id=assignment.ride_request_id,
+            trip_id=trip.id,
+            from_state=previous_trip_status,
+            to_state=trip.status.value,
+            metadata={"source": "driver.dropoff"},
+        )
+    if assignment.user_id is not None:
+        queue_notification_once(
+            db,
+            assignment.user_id,
+            title="Dropoff confirmed",
+            message="Your dropoff was confirmed. Trip closure is in progress.",
+            metadata={
+                "ride_id": str(assignment.ride_request_id),
+                "trip_id": str(trip.id),
+            },
+            dedupe_key=f"ride-transition:{assignment.ride_request_id}:{RideRequestStatus.DROPPED_OFF.value}",
+        )
     db.add_all([assignment, assignment.ride_request, trip])
     db.commit()
     return MessageResponse(message="Passenger marked as dropped off.")
@@ -460,6 +622,18 @@ def complete_trip(
             to_state=assignment.ride_request.status.value,
             metadata={"completed_at": completed_at.isoformat()},
         )
+        if assignment.user_id is not None:
+            queue_notification_once(
+                db,
+                assignment.user_id,
+                title="Ride completed",
+                message="Your ride has been completed. Thanks for riding.",
+                metadata={
+                    "ride_id": str(assignment.ride_request_id),
+                    "trip_id": str(trip.id),
+                },
+                dedupe_key=f"ride-transition:{assignment.ride_request_id}:{RideRequestStatus.COMPLETED.value}",
+            )
     db.add(trip)
     db.commit()
     return MessageResponse(message="Trip completed.")

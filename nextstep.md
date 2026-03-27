@@ -69,7 +69,7 @@ These are the main unfinished areas even after the recent upgrades:
 - Matching needs stronger observability, clearer scoring explanation, and more explicit config ownership
 - Scheduled rides exist, but the operator experience around them still needs polishing
 - Automated backend test coverage is still too light
-- There is no proper migration workflow yet
+- Alembic migration workflow now exists, but rollout discipline (staging/prod runbooks) still needs hardening
 - Local development still relies on SQLite; production-grade Postgres/PostGIS hardening is still ahead
 
 ## The Most Important Rule For Continuing
@@ -290,19 +290,19 @@ The next serious code push should add backend and frontend smoke coverage around
 - admin alert rendering
 - employee cancellation flow
 
-### 7. Add a migration strategy before heavy schema growth
+### 7. Harden migration operations before heavy schema growth
 
 This is easy to ignore and expensive to fix later.
 
-Right now schema evolution is still lightweight. Before adding more event tables, notification tables, or audit entities, add a migration workflow.
+Alembic is now integrated for schema evolution. Before adding more event tables, notification tables, or audit entities, harden promotion and rollback discipline.
 
-Recommended direction:
+Current direction:
 
-- add Alembic for backend schema migrations
+- keep Alembic as the only schema source of truth
 - keep local SQLite acceptable for dev if needed
 - treat Postgres/PostGIS as the target production datastore
 
-Without this, every schema change will risk local drift and confusion.
+Without disciplined migration rollout, every schema change can still risk environment drift.
 
 ## Detailed Status By Subsystem
 
@@ -575,9 +575,9 @@ Do not assume the event model is finished.
 
 That is okay for now, but long term this should move to a more production-grade worker setup.
 
-### 6. There is still no full migration workflow
+### 6. Migration workflow exists but still needs production guardrails
 
-If adding more tables, create the migration strategy first or accept local DB resets during development.
+If adding more tables, keep every schema change in Alembic revisions and test upgrade/downgrade before promotion.
 
 ## Suggested Immediate Milestone
 

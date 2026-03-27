@@ -5,6 +5,10 @@ import type {
   RideSummary,
   VanSummary,
 } from "../lib/types";
+import {
+  buildGoogleMapsDirectionsUrl,
+  buildGoogleMapsSearchUrl,
+} from "../lib/mapsLinks";
 
 export function InfoRow({ label, value }: { label: string; value: string }) {
   return (
@@ -61,18 +65,50 @@ export function RideTable({ rides }: { rides: RideSummary[] }) {
             <th>Destination</th>
             <th>Van</th>
             <th>Driver</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          {rides.map((ride) => (
-            <tr key={ride.id}>
-              <td>{ride.status.replaceAll("_", " ")}</td>
-              <td>{ride.pickup_address}</td>
-              <td>{ride.destination_address}</td>
-              <td>{ride.van_license_plate || "Pending"}</td>
-              <td>{ride.driver_name || "TBD"}</td>
-            </tr>
-          ))}
+          {rides.map((ride) => {
+            const pickupMapUrl = buildGoogleMapsSearchUrl(ride.pickup_address);
+            const directionsUrl = buildGoogleMapsDirectionsUrl({
+              origin: ride.pickup_address,
+              destination: ride.destination_address,
+            });
+            return (
+              <tr key={ride.id}>
+                <td>{ride.status.replaceAll("_", " ")}</td>
+                <td>{ride.pickup_address}</td>
+                <td>{ride.destination_address}</td>
+                <td>{ride.van_license_plate || "Pending"}</td>
+                <td>{ride.driver_name || "TBD"}</td>
+                <td>
+                  <div className="table-inline-actions">
+                    {pickupMapUrl && (
+                      <a
+                        className="ghost-button inline-link-button"
+                        href={pickupMapUrl}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Pickup map
+                      </a>
+                    )}
+                    {directionsUrl && (
+                      <a
+                        className="ghost-button inline-link-button"
+                        href={directionsUrl}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Directions
+                      </a>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -204,7 +240,7 @@ export function FleetRadar({
               className={`radar-point ${van.status}`}
               key={van.id}
               style={{ top: `${top}%`, left: `${left}%` }}
-              title={`${van.license_plate} • ${van.status}`}
+              title={`${van.license_plate} - ${van.status}`}
             >
               <span>{van.license_plate.slice(-4)}</span>
             </div>

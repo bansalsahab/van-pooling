@@ -14,6 +14,10 @@ import {
 import { useCopilot } from "../hooks/useCopilot";
 import { useLiveStream } from "../hooks/useLiveStream";
 import { loadGoogleMapsApi } from "../lib/googleMaps";
+import {
+  buildGoogleMapsDirectionsUrl,
+  buildGoogleMapsSearchUrl,
+} from "../lib/mapsLinks";
 import { api } from "../lib/api";
 import type {
   EmployeeLiveSnapshot,
@@ -177,6 +181,14 @@ export function EmployeeDashboard() {
   const notifications = snapshot?.data.notifications ?? [];
   const unreadNotifications = snapshot?.data.notifications_unread_count ?? 0;
   const insights = snapshot?.insights ?? [];
+  const activeRidePickupMapUrl = buildGoogleMapsSearchUrl(activeRide?.pickup_address);
+  const activeRideDestinationMapUrl = buildGoogleMapsSearchUrl(
+    activeRide?.destination_address,
+  );
+  const activeRideDirectionsUrl = buildGoogleMapsDirectionsUrl({
+    origin: activeRide?.pickup_address,
+    destination: activeRide?.destination_address,
+  });
   const mapMarkers = useMemo(
     () => (activeRide ? buildActiveRideMarkers(activeRide) : buildPreviewMarkers(form)),
     [activeRide, form],
@@ -385,7 +397,7 @@ export function EmployeeDashboard() {
         ride.trip_id
           ? `Ride assigned to ${ride.van_license_plate || "a van"} with live route tracking.`
           : ride.scheduled_time
-            ? "Scheduled ride queued and waiting for its dispatch window."
+            ? ride.delay_explanation || "Scheduled ride queued and waiting for its dispatch window."
             : "Ride request submitted and waiting for assignment.",
       );
       await Promise.all([refresh(), refreshBrief()]);
@@ -534,6 +546,22 @@ export function EmployeeDashboard() {
             <div className="stack">
               <InfoRow label="Pickup" value={activeRide.pickup_address} />
               <InfoRow label="Destination" value={activeRide.destination_address} />
+              {activeRide.scheduled_time && (
+                <>
+                  <InfoRow
+                    label="Scheduled pickup"
+                    value={formatDateTime(activeRide.scheduled_time)}
+                  />
+                  <InfoRow
+                    label="Dispatch timing"
+                    value={formatDispatchCountdown(activeRide)}
+                  />
+                  <InfoRow
+                    label="Schedule phase"
+                    value={activeRide.schedule_phase?.replaceAll("_", " ") || "queued"}
+                  />
+                </>
+              )}
               <InfoRow
                 label="Van"
                 value={activeRide.van_license_plate || "Awaiting van assignment"}
@@ -566,6 +594,44 @@ export function EmployeeDashboard() {
                 label="Next stop"
                 value={activeRide.next_stop_address || "Awaiting next movement"}
               />
+              <div className="button-row">
+                {activeRidePickupMapUrl && (
+                  <a
+                    className="ghost-button inline-link-button"
+                    href={activeRidePickupMapUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    Open pickup map
+                  </a>
+                )}
+                {activeRideDestinationMapUrl && (
+                  <a
+                    className="ghost-button inline-link-button"
+                    href={activeRideDestinationMapUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    Open destination map
+                  </a>
+                )}
+                {activeRideDirectionsUrl && (
+                  <a
+                    className="ghost-button inline-link-button"
+                    href={activeRideDirectionsUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    Open directions
+                  </a>
+                )}
+              </div>
+              {activeRide.delay_explanation && (
+                <InfoRow label="Dispatch note" value={activeRide.delay_explanation} />
+              )}
+              {activeRide.assignment_timing_note && (
+                <InfoRow label="Assignment timing" value={activeRide.assignment_timing_note} />
+              )}
               {isRideCancellable(activeRide.status) && (
                 <button
                   className="ghost-button"
@@ -992,6 +1058,15 @@ function formatTimestamp(value: string) {
   });
 }
 
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function formatDistance(value?: number | null) {
   if (!value) {
     return "TBD";
@@ -1013,6 +1088,27 @@ function parseCoordinateInput(value: string) {
   }
   const numeric = Number(normalized);
   return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatDispatchCountdown(ride: RideSummary) {
+  if (typeof ride.minutes_until_pickup === "number") {
+    if (ride.minutes_until_pickup > 0) {
+      return `${ride.minutes_until_pickup} min until pickup`;
+    }
+    if (ride.minutes_until_pickup === 0) {
+      return "Pickup window is now";
+    }
+    return `${Math.abs(ride.minutes_until_pickup)} min past scheduled pickup`;
+  }
+
+  if (
+    typeof ride.minutes_until_dispatch_window === "number" &&
+    ride.minutes_until_dispatch_window > 0
+  ) {
+    return `Dispatch starts in ${ride.minutes_until_dispatch_window} min`;
+  }
+
+  return "Dispatch timing in progress";
 }
 
 function isRideCancellable(status: string) {

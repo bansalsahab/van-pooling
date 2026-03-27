@@ -1,6 +1,7 @@
 """Role-aware operational insights."""
 import json
 from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -39,8 +40,9 @@ def build_role_insights(db: Session, current_user: User) -> list[AIInsight]:
 def build_role_copilot_brief(db: Session, current_user: User) -> AICopilotBrief:
     """Return a richer copilot briefing, preferring OpenAI when configured."""
     insights = build_role_insights(db, current_user)
-    fallback = _fallback_brief(current_user, insights)
-    context = _build_role_context(db, current_user, insights)
+    signal_pack = _build_copilot_signal_pack(db, current_user, insights)
+    fallback = _fallback_brief(current_user, insights, signal_pack)
+    context = _build_role_context(db, current_user, insights, signal_pack)
     structured = create_structured_output(
         cache_key=f"brief::{current_user.id}::{current_user.role.value}",
         system_prompt=(
@@ -99,9 +101,13 @@ def build_role_copilot_brief(db: Session, current_user: User) -> AICopilotBrief:
         headline=structured["headline"],
         summary=structured["summary"],
         urgency=structured["urgency"],
+        confidence=signal_pack["confidence"],
+        health_score=signal_pack["health_score"],
         priorities=structured["priorities"],
         recommended_actions=structured["recommended_actions"],
         operational_notes=structured["operational_notes"],
+        source_signals=signal_pack["source_signals"],
+        quick_prompts=signal_pack["quick_prompts"],
         rider_message=structured["rider_message"],
         generated_at=datetime.utcnow(),
         generated_by="openai",
@@ -115,8 +121,10 @@ def answer_role_copilot_question(
     question: str,
 ) -> AICopilotReply:
     """Answer a role-specific question using current platform state."""
-    context = _build_role_context(db, current_user, build_role_insights(db, current_user))
-    fallback = _fallback_question_reply(current_user, question)
+    insights = build_role_insights(db, current_user)
+    signal_pack = _build_copilot_signal_pack(db, current_user, insights)
+    context = _build_role_context(db, current_user, insights, signal_pack)
+    fallback = _fallback_question_reply(current_user, question, signal_pack)
     structured = create_structured_output(
         cache_key=f"ask::{current_user.id}::{question.strip().lower()}",
         system_prompt=(
@@ -153,6 +161,7 @@ def answer_role_copilot_question(
         answer=structured["answer"],
         action_items=structured["action_items"],
         caution=structured["caution"],
+        source_signals=signal_pack["source_signals"],
         generated_at=datetime.utcnow(),
         generated_by="openai",
         model=context.get("openai_model"),
@@ -457,6 +466,7 @@ def _build_role_context(
     db: Session,
     current_user: User,
     insights: list[AIInsight],
+    signal_pack: dict[str, Any],
 ) -> dict:
     if current_user.role == UserRole.EMPLOYEE:
         active_ride = get_active_ride(db, current_user)
@@ -475,6 +485,7 @@ def _build_role_context(
                 )
             ],
             "insights": [item.model_dump(mode="json") for item in insights],
+            "copilot_health": signal_pack,
             "openai_model": settings.OPENAI_MODEL,
         }
 
@@ -496,6 +507,7 @@ def _build_role_context(
                 )
             ],
             "insights": [item.model_dump(mode="json") for item in insights],
+            "copilot_health": signal_pack,
             "openai_model": settings.OPENAI_MODEL,
         }
 
@@ -530,11 +542,16 @@ def _build_role_context(
         ],
         "stale_vans": stale_vans,
         "insights": [item.model_dump(mode="json") for item in insights],
+        "copilot_health": signal_pack,
         "openai_model": settings.OPENAI_MODEL,
     }
 
 
-def _fallback_brief(current_user: User, insights: list[AIInsight]) -> AICopilotBrief:
+def _fallback_brief(
+    current_user: User,
+    insights: list[AIInsight],
+    signal_pack: dict[str, Any],
+) -> AICopilotBrief:
     primary = insights[0] if insights else AIInsight(
         title="Operations stable",
         summary="No urgent issues are available in the current snapshot.",
@@ -546,12 +563,16 @@ def _fallback_brief(current_user: User, insights: list[AIInsight]) -> AICopilotB
         headline=primary.title,
         summary=primary.summary,
         urgency="high" if primary.priority == "high" else "medium",
+        confidence=signal_pack["confidence"],
+        health_score=signal_pack["health_score"],
         priorities=primary.signals[:3],
         recommended_actions=primary.recommended_actions[:4],
         operational_notes=[
             f"Role: {current_user.role.value}",
             "Realtime dashboard cues are driving the fallback copilot summary.",
         ],
+        source_signals=signal_pack["source_signals"],
+        quick_prompts=signal_pack["quick_prompts"],
         rider_message=(
             "Watch the live dashboard for the next assignment."
             if current_user.role == UserRole.DRIVER
@@ -563,7 +584,11 @@ def _fallback_brief(current_user: User, insights: list[AIInsight]) -> AICopilotB
     )
 
 
-def _fallback_question_reply(current_user: User, question: str) -> AICopilotReply:
+def _fallback_question_reply(
+    current_user: User,
+    question: str,
+    signal_pack: dict[str, Any],
+) -> AICopilotReply:
     return AICopilotReply(
         answer=(
             f"The live {current_user.role.value} copilot could not reach OpenAI just now, "
@@ -575,7 +600,259 @@ def _fallback_question_reply(current_user: User, question: str) -> AICopilotRepl
             f"Review the question again: {question.strip()}",
         ],
         caution="OpenAI is unavailable or not configured for this environment.",
+        source_signals=signal_pack["source_signals"],
         generated_at=datetime.utcnow(),
         generated_by="fallback",
         model=None,
     )
+
+
+def _build_copilot_signal_pack(
+    db: Session,
+    current_user: User,
+    insights: list[AIInsight],
+) -> dict[str, Any]:
+    if current_user.role == UserRole.EMPLOYEE:
+        return _employee_signal_pack(db, current_user)
+    if current_user.role == UserRole.DRIVER:
+        return _driver_signal_pack(db, current_user)
+    return _admin_signal_pack(db, current_user, insights)
+
+
+def _employee_signal_pack(db: Session, current_user: User) -> dict[str, Any]:
+    ride = get_active_ride(db, current_user)
+    score = 88
+    confidence = "medium"
+    source_signals = [f"Role: {current_user.role.value}"]
+
+    if ride is None:
+        return {
+            "health_score": score,
+            "confidence": "high",
+            "source_signals": [
+                *source_signals,
+                "No active ride in progress",
+                "System ready to accept a new request",
+            ],
+            "quick_prompts": [
+                "Help me create a low-delay ride request right now.",
+                "When should I schedule my commute to avoid dispatch pressure?",
+                "What details improve my chances of fast matching?",
+            ],
+        }
+
+    source_signals.append(f"Ride status: {ride.status.replace('_', ' ')}")
+    if ride.estimated_wait_minutes is not None:
+        source_signals.append(f"Estimated wait: {ride.estimated_wait_minutes} min")
+        if ride.estimated_wait_minutes > 8:
+            score -= 16
+    if ride.schedule_phase:
+        source_signals.append(f"Schedule phase: {ride.schedule_phase.replace('_', ' ')}")
+        if ride.schedule_phase in {"at_risk", "past_due"}:
+            score -= 14
+
+    if ride.van_last_location_update:
+        age_seconds = int((datetime.utcnow() - ride.van_last_location_update).total_seconds())
+        source_signals.append(f"Driver location age: {max(age_seconds, 0)} sec")
+        if age_seconds <= 120:
+            confidence = "high"
+        elif age_seconds > settings.VAN_STALE_ALERT_SECONDS:
+            confidence = "low"
+            score -= 10
+    else:
+        source_signals.append("Driver location feed: unavailable")
+        if ride.van_id:
+            score -= 8
+
+    if ride.status in {
+        RideRequestStatus.REQUESTED.value,
+        RideRequestStatus.MATCHING.value,
+        RideRequestStatus.MATCHED.value,
+        RideRequestStatus.SCHEDULED_REQUESTED.value,
+        RideRequestStatus.SCHEDULED_QUEUED.value,
+        RideRequestStatus.MATCHING_AT_DISPATCH_WINDOW.value,
+    }:
+        score -= 8
+        quick_prompts = [
+            "What can I do now to reduce pickup delay?",
+            "Should I keep waiting or cancel and request again later?",
+            "Explain what this ride status means and what comes next.",
+        ]
+    elif ride.status in {
+        RideRequestStatus.DRIVER_EN_ROUTE.value,
+        RideRequestStatus.ARRIVED_AT_PICKUP.value,
+    }:
+        quick_prompts = [
+            "What should I check before boarding this van?",
+            "Give me a short rider message I can send to my team.",
+            "How reliable is my ETA right now?",
+        ]
+    else:
+        quick_prompts = [
+            "Summarize my remaining trip and expected arrival.",
+            "What should I do if route progress stalls?",
+            "Draft a short update about my arrival ETA.",
+        ]
+
+    return {
+        "health_score": _clamp_score(score),
+        "confidence": confidence,
+        "source_signals": source_signals[:5],
+        "quick_prompts": quick_prompts,
+    }
+
+
+def _driver_signal_pack(db: Session, current_user: User) -> dict[str, Any]:
+    dashboard = get_driver_dashboard(db, current_user)
+    van = dashboard.van
+    trip = dashboard.active_trip
+    score = 86
+    confidence = "medium"
+    source_signals = [f"Role: {current_user.role.value}"]
+
+    if van is None:
+        return {
+            "health_score": 34,
+            "confidence": "high",
+            "source_signals": [
+                *source_signals,
+                "No van assigned to this driver",
+                "Dispatch assignment required",
+            ],
+            "quick_prompts": [
+                "What should I tell dispatch to get assigned faster?",
+                "What is the minimum setup before I can accept trips?",
+                "Give me a checklist before going online as a driver.",
+            ],
+        }
+
+    source_signals.append(f"Van status: {van.status}")
+    if van.last_location_update:
+        age_seconds = int((datetime.utcnow() - van.last_location_update).total_seconds())
+        source_signals.append(f"Last GPS update: {max(age_seconds, 0)} sec ago")
+        if age_seconds <= 120:
+            confidence = "high"
+        elif age_seconds > settings.VAN_STALE_ALERT_SECONDS:
+            confidence = "low"
+            score -= 18
+    else:
+        source_signals.append("No GPS update recorded")
+        confidence = "low"
+        score -= 20
+
+    if trip is None:
+        score -= 6
+        source_signals.append("No active trip assigned")
+        quick_prompts = [
+            "How can I improve my chance of getting the next dispatch?",
+            "Where should I position the van for upcoming demand?",
+            "What checks should I complete while waiting for assignment?",
+        ]
+    else:
+        source_signals.append(f"Trip status: {trip.status.replace('_', ' ')}")
+        source_signals.append(f"Assigned passengers: {trip.passenger_count}")
+        pending_pickups = len(
+            [item for item in trip.passengers if item.status in {"assigned", "notified"}]
+        )
+        source_signals.append(f"Pending pickups: {pending_pickups}")
+        if pending_pickups > 0:
+            score -= 6
+        quick_prompts = [
+            "What should be my next operational action on this trip?",
+            "How do I reduce no-show or pickup delay risk right now?",
+            "Draft a short rider-facing update for this trip stage.",
+        ]
+
+    return {
+        "health_score": _clamp_score(score),
+        "confidence": confidence,
+        "source_signals": source_signals[:5],
+        "quick_prompts": quick_prompts,
+    }
+
+
+def _admin_signal_pack(
+    db: Session,
+    current_user: User,
+    insights: list[AIInsight],
+) -> dict[str, Any]:
+    dashboard = get_admin_dashboard(db, current_user.company_id, current_user.id)
+    vans = list_company_vans(db, current_user.company_id)
+    trips = list_company_trips(db, current_user.company_id)
+    alerts = list_admin_alerts(db, current_user)
+
+    stale_vans = [
+        van
+        for van in vans
+        if van.status in {VanStatus.AVAILABLE.value, VanStatus.ON_TRIP.value}
+        and (
+            van.last_location_update is None
+            or van.last_location_update
+            < datetime.utcnow() - timedelta(seconds=settings.VAN_STALE_ALERT_SECONDS)
+        )
+    ]
+    demand_gap = max(dashboard.pending_requests - dashboard.available_vans, 0)
+    planned_trips = len(
+        [
+            trip
+            for trip in trips
+            if trip.status in {TripStatus.PLANNED.value, TripStatus.DISPATCH_READY.value}
+        ]
+    )
+
+    score = 100
+    score -= min(45, demand_gap * 12)
+    score -= min(25, len(alerts) * 8)
+    score -= min(20, len(stale_vans) * 6)
+    score -= min(10, planned_trips * 2)
+
+    if len(alerts) >= 3 or demand_gap >= 2:
+        confidence = "low"
+    elif len(stale_vans) <= 1:
+        confidence = "high"
+    else:
+        confidence = "medium"
+
+    source_signals = [
+        f"Pending requests: {dashboard.pending_requests}",
+        f"Available vans: {dashboard.available_vans}",
+        f"Open alerts: {len(alerts)}",
+        f"Stale live feeds: {len(stale_vans)}",
+        f"Trips waiting start: {planned_trips}",
+    ]
+
+    if demand_gap > 0:
+        quick_prompts = [
+            "Which vans should we pre-position to absorb current demand pressure?",
+            "Suggest the fastest reassignment moves to reduce wait times.",
+            "Give me a rider-safe status update for unmatched demand.",
+        ]
+    elif alerts:
+        quick_prompts = [
+            "Rank current alerts by operational blast radius and urgency.",
+            "What exact actions should dispatch take in the next 10 minutes?",
+            "Draft a concise shift handoff note for unresolved alerts.",
+        ]
+    elif insights:
+        quick_prompts = [
+            "What should ops optimize next while the network is stable?",
+            "Suggest pre-positioning actions before the next commute wave.",
+            "Create a short checkpoint list for this dispatch shift.",
+        ]
+    else:
+        quick_prompts = [
+            "Summarize the fleet health in one paragraph.",
+            "What preventive checks should dispatch run now?",
+            "List early warning signals I should watch in the next hour.",
+        ]
+
+    return {
+        "health_score": _clamp_score(score),
+        "confidence": confidence,
+        "source_signals": source_signals,
+        "quick_prompts": quick_prompts,
+    }
+
+
+def _clamp_score(value: int) -> int:
+    return max(0, min(100, value))

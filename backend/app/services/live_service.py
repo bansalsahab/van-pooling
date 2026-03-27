@@ -129,6 +129,16 @@ def build_live_events(
     elif role == UserRole.DRIVER.value:
         events.extend(
             _diff_single_entity(
+                event_name="driver.updated",
+                previous_item=previous_data.get("dashboard"),
+                current_item=current_data.get("dashboard"),
+                generated_at=generated_at,
+                role=role,
+                entity_type="driver",
+            )
+        )
+        events.extend(
+            _diff_single_entity(
                 event_name="van.updated",
                 previous_item=((previous_data.get("dashboard") or {}).get("van")),
                 current_item=((current_data.get("dashboard") or {}).get("van")),
@@ -449,6 +459,22 @@ def _diff_list_entities(
                 before=previous_item,
                 after=current_item,
                 changed_fields=changed_fields,
+                generated_at=generated_at,
+                role=role,
+            )
+        )
+
+    for entity_id, previous_item in previous_by_id.items():
+        if entity_id in current_by_id:
+            continue
+        events.append(
+            _build_event(
+                event_name=event_name,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                action="removed",
+                before=previous_item,
+                after=None,
                 generated_at=generated_at,
                 role=role,
             )

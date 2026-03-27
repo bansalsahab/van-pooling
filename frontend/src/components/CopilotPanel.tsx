@@ -33,6 +33,12 @@ export function CopilotPanel({
     setQuestion("");
   }
 
+  async function handleQuickAsk(prompt: string) {
+    setQuestion(prompt);
+    await onAsk(prompt);
+    setQuestion("");
+  }
+
   return (
     <section className="panel copilot-panel">
       <div className="panel-header">
@@ -56,6 +62,15 @@ export function CopilotPanel({
             </div>
             <span className={`priority-pill ${brief.urgency}`}>{brief.generated_by}</span>
           </div>
+          <div className="copilot-health">
+            <div>
+              <span className="eyebrow">AI Health Score</span>
+              <strong>{brief.health_score}/100</strong>
+            </div>
+            <span className={`priority-pill ${brief.confidence}`}>
+              confidence: {brief.confidence}
+            </span>
+          </div>
           <div className="signal-row">
             {brief.priorities.map((priority) => (
               <span className="signal-pill" key={priority}>
@@ -63,6 +78,36 @@ export function CopilotPanel({
               </span>
             ))}
           </div>
+          {brief.source_signals.length > 0 && (
+            <div className="stack compact">
+              <span className="eyebrow">Grounding Signals</span>
+              <div className="signal-row">
+                {brief.source_signals.map((signal) => (
+                  <span className="signal-pill" key={signal}>
+                    {signal}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {brief.quick_prompts.length > 0 && (
+            <div className="stack compact">
+              <span className="eyebrow">Quick Prompts</span>
+              <div className="button-row">
+                {brief.quick_prompts.map((prompt) => (
+                  <button
+                    className="ghost-button quick-prompt"
+                    disabled={asking}
+                    key={prompt}
+                    onClick={() => void handleQuickAsk(prompt)}
+                    type="button"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <ul className="action-list">
             {brief.recommended_actions.map((action) => (
               <li key={action}>{action}</li>
@@ -111,6 +156,15 @@ export function CopilotPanel({
             <strong>Copilot answer</strong>
             <p>{reply.answer}</p>
           </div>
+          {reply.source_signals.length > 0 && (
+            <div className="signal-row">
+              {reply.source_signals.map((signal) => (
+                <span className="signal-pill" key={signal}>
+                  {signal}
+                </span>
+              ))}
+            </div>
+          )}
           {reply.action_items.length > 0 && (
             <ul className="action-list">
               {reply.action_items.map((item) => (

@@ -1,15 +1,16 @@
 """Seed demo data using ORM models."""
 from app.core.security import get_password_hash
-from app.database import SessionLocal, init_db
+from app.database import SessionLocal
 from app.geo import point_value
 from app.models.company import Company
 from app.models.user import User, UserRole, UserStatus
 from app.models.van import Van, VanStatus
+from app.services.migration_service import upgrade_database_schema
 
 
 def seed() -> None:
     """Create a demo tenant, users, and vans if they do not exist."""
-    init_db()
+    upgrade_database_schema()
     db = SessionLocal()
     try:
         existing_company = db.query(Company).filter_by(domain="techcorp.com").first()

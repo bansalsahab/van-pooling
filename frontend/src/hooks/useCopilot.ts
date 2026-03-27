@@ -60,6 +60,21 @@ export function useCopilot(token: string | null) {
     void refreshBrief();
   }, [refreshBrief, token]);
 
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      void refreshBrief();
+    }, 60000);
+
+    return () => window.clearInterval(intervalId);
+  }, [refreshBrief, token]);
+
   return {
     brief,
     reply,
