@@ -25,6 +25,7 @@ from app.services.audit_service import record_dispatch_event
 from app.services.dispatch_ops_service import mark_passenger_no_show
 from app.services.dashboard_service import get_driver_dashboard, serialize_driver_trip
 from app.services.lifecycle_service import TRIP_ACTIVE_STATUSES, close_trip, synchronize_trip_lifecycle
+from app.services.notification_service import queue_notification
 from app.services.routing_service import rebuild_trip_route
 
 router = APIRouter(prefix="/driver", tags=["driver"])
@@ -197,6 +198,16 @@ def start_trip(
 ) -> MessageResponse:
     """Mark a dispatch-ready trip as active toward pickups."""
     trip = _get_driver_trip_or_404(db, current_user, trip_id)
+    if trip.accepted_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Accept the trip before starting it.",
+        )
+    if trip.started_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Trip has already started.",
+        )
     previous_trip_status = trip.status.value
     trip.started_at = trip.started_at or datetime.utcnow()
     trip.status = TripStatus.ACTIVE_TO_PICKUP
@@ -221,6 +232,72 @@ def start_trip(
     return MessageResponse(message="Trip started.")
 
 
+def _ensure_trip_started(trip: Trip) -> None:
+    if trip.started_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Accept and start the trip before updating rider progress.",
+        )
+
+
+def _notify_trip_acceptance(db: Session, trip: Trip) -> None:
+    for assignment in trip.trip_passengers:
+        if assignment.ride_request is None or assignment.user_id is None:
+            continue
+        queue_notification(
+            db,
+            assignment.user_id,
+            title="Driver confirmed your ride",
+            message=(
+                f"Your driver acknowledged trip {str(trip.id)[:8]} and is preparing for pickup."
+            ),
+            metadata={
+                "trip_id": str(trip.id),
+                "ride_id": str(assignment.ride_request_id),
+            },
+        )
+
+
+@router.post("/trips/{trip_id}/accept", response_model=MessageResponse)
+def accept_trip(
+    trip_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DRIVER)),
+) -> MessageResponse:
+    """Acknowledge responsibility for a dispatch-ready trip before departure."""
+    trip = _get_driver_trip_or_404(db, current_user, trip_id)
+    if trip.status not in {TripStatus.PLANNED, TripStatus.DISPATCH_READY}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only dispatch-ready trips can be accepted.",
+        )
+    if trip.accepted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Trip has already been accepted.",
+        )
+
+    previous_trip_status = trip.status.value
+    trip.accepted_at = datetime.utcnow()
+    synchronize_trip_lifecycle(trip)
+    rebuild_trip_route(db, trip)
+    _notify_trip_acceptance(db, trip)
+    record_dispatch_event(
+        db,
+        company_id=current_user.company_id,
+        event_type="trip.accepted",
+        actor_type=current_user.role.value,
+        actor_user_id=current_user.id,
+        trip_id=trip.id,
+        from_state=previous_trip_status,
+        to_state=trip.status.value,
+        metadata={"accepted_at": trip.accepted_at.isoformat()},
+    )
+    db.add(trip)
+    db.commit()
+    return MessageResponse(message="Trip accepted. You can now start the route.")
+
+
 @router.post("/trips/{trip_id}/pickup/{ride_request_id}", response_model=MessageResponse)
 def pickup_passenger(
     trip_id: UUID,
@@ -230,6 +307,7 @@ def pickup_passenger(
 ) -> MessageResponse:
     """Mark a passenger as picked up."""
     trip = _get_driver_trip_or_404(db, current_user, trip_id)
+    _ensure_trip_started(trip)
     assignment = db.scalar(
         select(TripPassenger).where(
             TripPassenger.trip_id == trip_id,
@@ -276,6 +354,7 @@ def dropoff_passenger(
 ) -> MessageResponse:
     """Mark a passenger as dropped off."""
     trip = _get_driver_trip_or_404(db, current_user, trip_id)
+    _ensure_trip_started(trip)
     assignment = db.scalar(
         select(TripPassenger).where(
             TripPassenger.trip_id == trip_id,
@@ -325,6 +404,7 @@ def complete_trip(
 ) -> MessageResponse:
     """Force-complete a trip and release the van."""
     trip = _get_driver_trip_or_404(db, current_user, trip_id)
+    _ensure_trip_started(trip)
     previous_trip_status = trip.status.value
     completed_at = datetime.utcnow()
     for assignment in trip.trip_passengers:
@@ -393,6 +473,8 @@ def no_show_passenger(
     current_user: User = Depends(require_roles(UserRole.DRIVER)),
 ) -> MessageResponse:
     """Mark a passenger as a no-show and alert dispatch."""
+    trip = _get_driver_trip_or_404(db, current_user, trip_id)
+    _ensure_trip_started(trip)
     mark_passenger_no_show(
         db,
         driver_user=current_user,

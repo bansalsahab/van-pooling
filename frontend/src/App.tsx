@@ -115,6 +115,14 @@ export default function App() {
         }
       />
       <Route
+        path="/admin/requests"
+        element={
+          <ProtectedRoute role="admin">
+            <AdminDashboard section="requests" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/admin/notifications"
         element={
           <ProtectedRoute role="admin">

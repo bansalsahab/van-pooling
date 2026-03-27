@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.database import check_database_connection, init_db
 from app.services.dispatch_worker import dispatch_worker_loop, run_startup_recovery
 from app.services.notification_service import ensure_notification_schema
+from app.services.runtime_schema_service import ensure_trip_schema
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -34,6 +35,7 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 async def startup() -> None:
     """Initialize the database, recover pending dispatches, and start workers."""
     init_db()
+    ensure_trip_schema()
     ensure_notification_schema()
     run_startup_recovery()
     app.state.dispatch_stop_event = asyncio.Event()

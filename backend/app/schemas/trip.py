@@ -29,6 +29,7 @@ class DriverTripSummary(BaseModel):
     van_id: UUID
     route: RoutePlan | dict[str, Any]
     estimated_duration_minutes: int | None = None
+    accepted_at: datetime | None = None
     started_at: datetime | None = None
     passenger_count: int = 0
     passengers: list[TripPassengerSummary] = Field(default_factory=list)
@@ -43,6 +44,7 @@ class TripSummary(BaseModel):
     van_license_plate: str | None = None
     route: RoutePlan | dict[str, Any]
     estimated_duration_minutes: int | None = None
+    accepted_at: datetime | None = None
     started_at: datetime | None = None
     created_at: datetime | None = None
     passenger_count: int = 0

@@ -7,6 +7,7 @@ interface LayoutProps {
   title: string;
   subtitle: string;
   notificationUnreadCount?: number;
+  pendingRequestCount?: number;
   children: ReactNode;
 }
 
@@ -21,6 +22,7 @@ export function AppLayout({
   title,
   subtitle,
   notificationUnreadCount = 0,
+  pendingRequestCount = 0,
   children,
 }: LayoutProps) {
   const { user, logout } = useAuth();
@@ -88,6 +90,15 @@ export function AppLayout({
                 to="/admin/trips"
               >
                 Trips
+              </NavLink>
+              <NavLink
+                className={({ isActive }) => (isActive ? "active" : "")}
+                to="/admin/requests"
+              >
+                Requests
+                {pendingRequestCount > 0 ? (
+                  <span className="nav-dot" aria-label="Pending requests" />
+                ) : null}
               </NavLink>
               <NavLink className={({ isActive }) => (isActive ? "active" : "")} to={notificationRoute}>
                 Notifications

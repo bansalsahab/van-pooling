@@ -48,3 +48,15 @@ class RideRequestSummary(BaseModel):
     route_distance_meters: int | None = None
     route_duration_minutes: int | None = None
     next_stop_address: str | None = None
+    driver_acknowledged_at: datetime | None = None
+
+
+class AdminPendingRideSummary(RideRequestSummary):
+    """Admin-facing summary for unmatched or queued ride requests."""
+
+    rider_name: str | None = None
+    rider_email: str | None = None
+    rider_phone: str | None = None
+    age_minutes: int = 0
+    request_kind: str = "immediate"
+    dispatch_note: str | None = None

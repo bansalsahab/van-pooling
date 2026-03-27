@@ -11,6 +11,7 @@ from app.schemas.admin_ops import OptionalReasonInput, TripReassignInput
 from app.schemas.alert import AlertSummary
 from app.schemas.dispatch_event import DispatchEventSummary
 from app.schemas.dashboard import AdminDashboardSummary
+from app.schemas.ride_request import AdminPendingRideSummary
 from app.schemas.trip import TripSummary
 from app.schemas.user import AdminUserCreate, UserSummary
 from app.schemas.van import AdminVanCreate, VanSummary
@@ -28,6 +29,7 @@ from app.services.dashboard_service import (
     list_company_vans,
 )
 from app.services.notification_service import list_admin_alerts, resolve_admin_alert
+from app.services.ride_service import list_company_pending_requests
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -75,6 +77,15 @@ def trips(
 ) -> list[TripSummary]:
     """Return trips for the admin's company."""
     return list_company_trips(db, current_user.company_id)
+
+
+@router.get("/requests", response_model=list[AdminPendingRideSummary])
+def pending_requests(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminPendingRideSummary]:
+    """Return unmatched or queued ride requests for the admin's company."""
+    return list_company_pending_requests(db, current_user.company_id)
 
 
 @router.get("/trips/{trip_id}/events", response_model=list[DispatchEventSummary])

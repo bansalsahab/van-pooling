@@ -15,7 +15,11 @@ from app.services.dashboard_service import (
     list_company_vans,
 )
 from app.services.notification_service import list_admin_alerts, list_notification_feed
-from app.services.ride_service import get_active_ride, list_user_rides
+from app.services.ride_service import (
+    get_active_ride,
+    list_company_pending_requests,
+    list_user_rides,
+)
 
 
 def build_live_snapshot(db, current_user: User) -> dict[str, Any]:
@@ -82,6 +86,10 @@ def build_live_snapshot(db, current_user: User) -> dict[str, Any]:
             ],
             "trips": [
                 _dump_model(item) for item in list_company_trips(db, current_user.company_id)
+            ],
+            "pending_requests": [
+                _dump_model(item)
+                for item in list_company_pending_requests(db, current_user.company_id)
             ],
             "alerts": [
                 _dump_model(item) for item in list_admin_alerts(db, current_user)
@@ -158,6 +166,16 @@ def build_live_events(
                 generated_at=generated_at,
                 role=role,
                 entity_type="trip",
+            )
+        )
+        events.extend(
+            _diff_list_entities(
+                event_name="ride.updated",
+                previous_items=previous_data.get("pending_requests") or [],
+                current_items=current_data.get("pending_requests") or [],
+                generated_at=generated_at,
+                role=role,
+                entity_type="ride",
             )
         )
         events.extend(

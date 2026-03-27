@@ -1,6 +1,7 @@
 import type {
   AlertSummary,
   AdminDashboardSummary,
+  AdminPendingRideSummary,
   AdminUserCreateInput,
   AdminVanCreateInput,
   AIInsight,
@@ -199,6 +200,12 @@ export const api = {
       token,
     });
   },
+  acceptTrip(token: string, tripId: string) {
+    return request<{ message: string }>(`/driver/trips/${tripId}/accept`, {
+      method: "POST",
+      token,
+    });
+  },
   pickupPassenger(token: string, tripId: string, rideRequestId: string) {
     return request<{ message: string }>(
       `/driver/trips/${tripId}/pickup/${rideRequestId}`,
@@ -246,6 +253,9 @@ export const api = {
   },
   getAdminTrips(token: string) {
     return request<TripSummary[]>("/admin/trips", { token });
+  },
+  getAdminPendingRequests(token: string) {
+    return request<AdminPendingRideSummary[]>("/admin/requests", { token });
   },
   getAdminTripEvents(token: string, tripId: string) {
     return request<DispatchEventSummary[]>(`/admin/trips/${tripId}/events`, { token });

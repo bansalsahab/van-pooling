@@ -34,6 +34,7 @@ CREATE INDEX idx_ride_requests_status_requested_at ON ride_requests(status, requ
 CREATE INDEX idx_trips_van ON trips(van_id);
 CREATE INDEX idx_trips_company ON trips(company_id);
 CREATE INDEX idx_trips_status ON trips(status);
+CREATE INDEX idx_trips_accepted_at ON trips(accepted_at);
 CREATE INDEX idx_trips_started_at ON trips(started_at);
 CREATE INDEX idx_trips_completed_at ON trips(completed_at);
 CREATE INDEX idx_trips_status_started_at ON trips(status, started_at);

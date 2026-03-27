@@ -144,6 +144,8 @@ def reassign_trip_van(
     )
     target_van.status = VanStatus.ON_TRIP
     trip.van = target_van
+    if trip.started_at is None:
+        trip.accepted_at = None
     db.add(target_van)
 
     synchronize_trip_lifecycle(trip)
@@ -174,7 +176,7 @@ def reassign_trip_van(
             target_van.driver_id,
             title="Trip reassigned to you",
             message=(
-                f"Dispatch moved trip {str(trip.id)[:8]} to your van."
+                f"Dispatch moved trip {str(trip.id)[:8]} to your van. Accept it in the driver console."
                 + (f" Reason: {reason}" if reason else "")
             ),
             metadata={"trip_id": str(trip.id)},

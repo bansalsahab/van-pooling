@@ -98,6 +98,16 @@ export interface RideSummary {
   route_distance_meters?: number | null;
   route_duration_minutes?: number | null;
   next_stop_address?: string | null;
+  driver_acknowledged_at?: string | null;
+}
+
+export interface AdminPendingRideSummary extends RideSummary {
+  rider_name?: string | null;
+  rider_email?: string | null;
+  rider_phone?: string | null;
+  age_minutes: number;
+  request_kind: "immediate" | "scheduled" | string;
+  dispatch_note?: string | null;
 }
 
 export interface VanSummary {
@@ -130,6 +140,7 @@ export interface DriverTripSummary {
   van_id: string;
   route: RoutePlan;
   estimated_duration_minutes?: number | null;
+  accepted_at?: string | null;
   started_at?: string | null;
   passenger_count: number;
   passengers: TripPassengerSummary[];
@@ -161,6 +172,7 @@ export interface TripSummary {
   van_license_plate?: string | null;
   route: RoutePlan;
   estimated_duration_minutes?: number | null;
+  accepted_at?: string | null;
   started_at?: string | null;
   created_at?: string | null;
   passenger_count: number;
@@ -306,6 +318,7 @@ export interface AdminLiveSnapshot {
     employees: UserProfile[];
     drivers: UserProfile[];
     trips: TripSummary[];
+    pending_requests: AdminPendingRideSummary[];
     alerts: AlertSummary[];
     notifications: NotificationSummary[];
     notifications_unread_count: number;

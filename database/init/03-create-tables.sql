@@ -81,6 +81,7 @@ CREATE TABLE trips (
     total_distance_meters INTEGER,
     estimated_duration_minutes INTEGER,
     actual_duration_minutes INTEGER,
+    accepted_at TIMESTAMP,
     started_at TIMESTAMP,
     completed_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT NOW(),

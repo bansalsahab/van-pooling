@@ -44,7 +44,7 @@ export async function loadGoogleMapsApi(): Promise<typeof window.google | null> 
         "https://maps.googleapis.com/maps/api/js?" +
         new URLSearchParams({
           key: apiKey,
-          libraries: "geometry",
+          libraries: "geometry,places",
           v: "weekly",
           callback: callbackName,
         }).toString();

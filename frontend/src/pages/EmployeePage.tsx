@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AppLayout } from "../components/Layout";
 import { CopilotPanel } from "../components/CopilotPanel";
@@ -13,6 +13,7 @@ import {
 } from "../components/common";
 import { useCopilot } from "../hooks/useCopilot";
 import { useLiveStream } from "../hooks/useLiveStream";
+import { loadGoogleMapsApi } from "../lib/googleMaps";
 import { api } from "../lib/api";
 import type {
   EmployeeLiveSnapshot,
@@ -33,6 +34,15 @@ const EMPTY_RIDE_FORM = {
   scheduled_time: "",
 };
 
+type AddressField = "pickup" | "destination";
+
+interface PlaceSuggestion {
+  placeId: string;
+  description: string;
+  primaryText: string;
+  secondaryText?: string;
+}
+
 export function EmployeeDashboard() {
   const { token, user } = useAuth();
   const { snapshot, connectionState, lastMessageAt, streamError, recentEvents } =
@@ -49,6 +59,20 @@ export function EmployeeDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_RIDE_FORM);
   const [profileDefaultsApplied, setProfileDefaultsApplied] = useState(false);
+  const [suggestions, setSuggestions] = useState<Record<AddressField, PlaceSuggestion[]>>({
+    pickup: [],
+    destination: [],
+  });
+  const [suggestionsLoading, setSuggestionsLoading] = useState<
+    Record<AddressField, boolean>
+  >({
+    pickup: false,
+    destination: false,
+  });
+  const [activeAutocompleteField, setActiveAutocompleteField] =
+    useState<AddressField | null>(null);
+  const autocompleteServiceRef = useRef<any>(null);
+  const geocoderRef = useRef<any>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -79,15 +103,15 @@ export function EmployeeDashboard() {
 
   useEffect(() => {
     if (!token) return;
-    const pickupLatitude = Number(form.pickup_latitude);
-    const pickupLongitude = Number(form.pickup_longitude);
-    const destinationLatitude = Number(form.destination_latitude);
-    const destinationLongitude = Number(form.destination_longitude);
+    const pickupLatitude = parseCoordinateInput(form.pickup_latitude);
+    const pickupLongitude = parseCoordinateInput(form.pickup_longitude);
+    const destinationLatitude = parseCoordinateInput(form.destination_latitude);
+    const destinationLongitude = parseCoordinateInput(form.destination_longitude);
     if (
-      !Number.isFinite(pickupLatitude) ||
-      !Number.isFinite(pickupLongitude) ||
-      !Number.isFinite(destinationLatitude) ||
-      !Number.isFinite(destinationLongitude)
+      pickupLatitude === null ||
+      pickupLongitude === null ||
+      destinationLatitude === null ||
+      destinationLongitude === null
     ) {
       setRoutePreview(null);
       return;
@@ -126,6 +150,28 @@ export function EmployeeDashboard() {
     token,
   ]);
 
+  useEffect(
+    () =>
+      queueAutocompleteSuggestions(
+        "pickup",
+        form.pickup_address,
+        form.pickup_latitude,
+        form.pickup_longitude,
+      ),
+    [form.pickup_address, form.pickup_latitude, form.pickup_longitude],
+  );
+
+  useEffect(
+    () =>
+      queueAutocompleteSuggestions(
+        "destination",
+        form.destination_address,
+        form.destination_latitude,
+        form.destination_longitude,
+      ),
+    [form.destination_address, form.destination_latitude, form.destination_longitude],
+  );
+
   const activeRide = snapshot?.data.active_ride ?? fallbackActiveRide;
   const rideHistory = snapshot?.data.ride_history ?? fallbackRideHistory;
   const notifications = snapshot?.data.notifications ?? [];
@@ -155,9 +201,167 @@ export function EmployeeDashboard() {
     setFallbackRideHistory(history);
   }
 
+  async function ensureAutocompleteServices() {
+    const google = await loadGoogleMapsApi();
+    if (!google?.maps?.places) {
+      return null;
+    }
+    if (!autocompleteServiceRef.current) {
+      autocompleteServiceRef.current = new google.maps.places.AutocompleteService();
+    }
+    if (!geocoderRef.current) {
+      geocoderRef.current = new google.maps.Geocoder();
+    }
+    return {
+      google,
+      autocompleteService: autocompleteServiceRef.current,
+      geocoder: geocoderRef.current,
+    };
+  }
+
+  function queueAutocompleteSuggestions(
+    field: AddressField,
+    address: string,
+    latitudeValue: string,
+    longitudeValue: string,
+  ) {
+    const query = address.trim();
+    const hasCoordinates =
+      parseCoordinateInput(latitudeValue) !== null &&
+      parseCoordinateInput(longitudeValue) !== null;
+    if (query.length < 3 || hasCoordinates) {
+      setSuggestions((current) => ({ ...current, [field]: [] }));
+      setSuggestionsLoading((current) => ({ ...current, [field]: false }));
+      return () => {};
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        setSuggestionsLoading((current) => ({ ...current, [field]: true }));
+        const services = await ensureAutocompleteServices();
+        if (!services) {
+          setSuggestions((current) => ({ ...current, [field]: [] }));
+          return;
+        }
+
+        const predictions = await new Promise<any[]>((resolve) => {
+          services.autocompleteService.getPlacePredictions(
+            {
+              input: query,
+              componentRestrictions: { country: "in" },
+              types: ["geocode"],
+            },
+            (results: any[] | null) => resolve(results || []),
+          );
+        });
+
+        setSuggestions((current) => ({
+          ...current,
+          [field]: predictions.slice(0, 5).map((prediction) => ({
+            placeId: prediction.place_id,
+            description: prediction.description,
+            primaryText:
+              prediction.structured_formatting?.main_text || prediction.description,
+            secondaryText: prediction.structured_formatting?.secondary_text,
+          })),
+        }));
+      } catch {
+        setSuggestions((current) => ({ ...current, [field]: [] }));
+      } finally {
+        setSuggestionsLoading((current) => ({ ...current, [field]: false }));
+      }
+    }, 260);
+
+    return () => window.clearTimeout(timeoutId);
+  }
+
+  async function applyAutocompleteSuggestion(
+    field: AddressField,
+    suggestion: PlaceSuggestion,
+  ) {
+    const services = await ensureAutocompleteServices();
+    if (!services) {
+      if (!token) return;
+      setForm((current) =>
+        field === "pickup"
+          ? { ...current, pickup_address: suggestion.description }
+          : { ...current, destination_address: suggestion.description },
+      );
+      await resolveAddress(field, suggestion.description);
+      return;
+    }
+
+    setResolvingField(field);
+    setError(null);
+    try {
+      const results = await new Promise<any[]>((resolve, reject) => {
+        services.geocoder.geocode(
+          { placeId: suggestion.placeId },
+          (items: any[] | null, status: string) => {
+            if (status !== "OK" || !items?.length) {
+              reject(new Error("Could not resolve that place."));
+              return;
+            }
+            resolve(items);
+          },
+        );
+      });
+
+      const selected = results[0];
+      const location = selected.geometry?.location;
+      const latitude = typeof location?.lat === "function" ? location.lat() : null;
+      const longitude = typeof location?.lng === "function" ? location.lng() : null;
+      if (latitude === null || longitude === null) {
+        throw new Error("Could not read coordinates for the selected place.");
+      }
+
+      if (field === "pickup") {
+        setForm((current) => ({
+          ...current,
+          pickup_address: selected.formatted_address || suggestion.description,
+          pickup_latitude: latitude.toFixed(6),
+          pickup_longitude: longitude.toFixed(6),
+        }));
+      } else {
+        setForm((current) => ({
+          ...current,
+          destination_address: selected.formatted_address || suggestion.description,
+          destination_latitude: latitude.toFixed(6),
+          destination_longitude: longitude.toFixed(6),
+        }));
+      }
+      setSuggestions((current) => ({ ...current, [field]: [] }));
+      setActiveAutocompleteField(null);
+      setMessage(
+        `${field === "pickup" ? "Pickup" : "Destination"} selected from live map suggestions.`,
+      );
+    } catch (selectionError) {
+      setError(
+        selectionError instanceof Error
+          ? selectionError.message
+          : "Could not resolve that place.",
+      );
+    } finally {
+      setResolvingField(null);
+    }
+  }
+
   async function handleRequestRide(event: React.FormEvent) {
     event.preventDefault();
     if (!token) return;
+    const pickupLatitude = parseCoordinateInput(form.pickup_latitude);
+    const pickupLongitude = parseCoordinateInput(form.pickup_longitude);
+    const destinationLatitude = parseCoordinateInput(form.destination_latitude);
+    const destinationLongitude = parseCoordinateInput(form.destination_longitude);
+    if (
+      pickupLatitude === null ||
+      pickupLongitude === null ||
+      destinationLatitude === null ||
+      destinationLongitude === null
+    ) {
+      setError("Resolve or enter valid pickup and destination coordinates before requesting a ride.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -165,13 +369,13 @@ export function EmployeeDashboard() {
       const ride = await api.requestRide(token, {
         pickup: {
           address: form.pickup_address,
-          latitude: Number(form.pickup_latitude),
-          longitude: Number(form.pickup_longitude),
+          latitude: pickupLatitude,
+          longitude: pickupLongitude,
         },
         destination: {
           address: form.destination_address,
-          latitude: Number(form.destination_latitude),
-          longitude: Number(form.destination_longitude),
+          latitude: destinationLatitude,
+          longitude: destinationLongitude,
         },
         scheduled_time: form.scheduled_time
           ? new Date(form.scheduled_time).toISOString()
@@ -225,10 +429,13 @@ export function EmployeeDashboard() {
     );
   }
 
-  async function resolveAddress(field: "pickup" | "destination") {
+  async function resolveAddress(
+    field: "pickup" | "destination",
+    explicitAddress?: string,
+  ) {
     if (!token) return;
-    const address =
-      field === "pickup" ? form.pickup_address.trim() : form.destination_address.trim();
+    const address = explicitAddress?.trim()
+      || (field === "pickup" ? form.pickup_address.trim() : form.destination_address.trim());
     if (!address) {
       return;
     }
@@ -336,6 +543,16 @@ export function EmployeeDashboard() {
                 value={activeRide.driver_name || "Assignment in progress"}
               />
               <InfoRow
+                label="Driver confirmation"
+                value={
+                  activeRide.driver_acknowledged_at
+                    ? formatTimestamp(activeRide.driver_acknowledged_at)
+                    : activeRide.trip_id
+                      ? "Waiting for driver confirmation"
+                      : "Assignment in progress"
+                }
+              />
+              <InfoRow
                 label="ETA"
                 value={
                   activeRide.route_duration_minutes
@@ -405,17 +622,48 @@ export function EmployeeDashboard() {
                 {resolvingField === "destination" ? "Resolving..." : "Resolve destination"}
               </button>
             </div>
-            <label>
+            <label className="address-field">
               Pickup address
               <input
                 value={form.pickup_address}
+                onFocus={() => setActiveAutocompleteField("pickup")}
+                onBlur={() =>
+                  window.setTimeout(() => {
+                    setActiveAutocompleteField((current) =>
+                      current === "pickup" ? null : current,
+                    );
+                  }, 120)
+                }
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
                     pickup_address: event.target.value,
+                    pickup_latitude: "",
+                    pickup_longitude: "",
                   }))
                 }
               />
+              {activeAutocompleteField === "pickup" &&
+                (suggestionsLoading.pickup || suggestions.pickup.length > 0) && (
+                <div className="autocomplete-list">
+                  {suggestionsLoading.pickup && (
+                    <div className="autocomplete-status">Searching places...</div>
+                  )}
+                  {!suggestionsLoading.pickup &&
+                    suggestions.pickup.map((suggestion) => (
+                      <button
+                        className="autocomplete-option"
+                        key={suggestion.placeId}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => void applyAutocompleteSuggestion("pickup", suggestion)}
+                        type="button"
+                      >
+                        <strong>{suggestion.primaryText}</strong>
+                        {suggestion.secondaryText && <span>{suggestion.secondaryText}</span>}
+                      </button>
+                    ))}
+                </div>
+              )}
             </label>
             <div className="inline-grid">
               <label>
@@ -443,17 +691,48 @@ export function EmployeeDashboard() {
                 />
               </label>
             </div>
-            <label>
+            <label className="address-field">
               Destination address
               <input
                 value={form.destination_address}
+                onFocus={() => setActiveAutocompleteField("destination")}
+                onBlur={() =>
+                  window.setTimeout(() => {
+                    setActiveAutocompleteField((current) =>
+                      current === "destination" ? null : current,
+                    );
+                  }, 120)
+                }
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
                     destination_address: event.target.value,
+                    destination_latitude: "",
+                    destination_longitude: "",
                   }))
                 }
               />
+              {activeAutocompleteField === "destination" &&
+                (suggestionsLoading.destination || suggestions.destination.length > 0) && (
+                <div className="autocomplete-list">
+                  {suggestionsLoading.destination && (
+                    <div className="autocomplete-status">Searching places...</div>
+                  )}
+                  {!suggestionsLoading.destination &&
+                    suggestions.destination.map((suggestion) => (
+                      <button
+                        className="autocomplete-option"
+                        key={suggestion.placeId}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => void applyAutocompleteSuggestion("destination", suggestion)}
+                        type="button"
+                      >
+                        <strong>{suggestion.primaryText}</strong>
+                        {suggestion.secondaryText && <span>{suggestion.secondaryText}</span>}
+                      </button>
+                    ))}
+                </div>
+              )}
             </label>
             <div className="inline-grid">
               <label>
@@ -677,12 +956,12 @@ function buildPreviewMarkers(form: {
   destination_longitude: string;
 }): MapMarkerSpec[] {
   const markers: MapMarkerSpec[] = [];
-  const pickupLatitude = Number(form.pickup_latitude);
-  const pickupLongitude = Number(form.pickup_longitude);
-  const destinationLatitude = Number(form.destination_latitude);
-  const destinationLongitude = Number(form.destination_longitude);
+  const pickupLatitude = parseCoordinateInput(form.pickup_latitude);
+  const pickupLongitude = parseCoordinateInput(form.pickup_longitude);
+  const destinationLatitude = parseCoordinateInput(form.destination_latitude);
+  const destinationLongitude = parseCoordinateInput(form.destination_longitude);
 
-  if (Number.isFinite(pickupLatitude) && Number.isFinite(pickupLongitude)) {
+  if (pickupLatitude !== null && pickupLongitude !== null) {
     markers.push({
       id: "preview-pickup",
       latitude: pickupLatitude,
@@ -692,7 +971,7 @@ function buildPreviewMarkers(form: {
       tone: "pickup",
     });
   }
-  if (Number.isFinite(destinationLatitude) && Number.isFinite(destinationLongitude)) {
+  if (destinationLatitude !== null && destinationLongitude !== null) {
     markers.push({
       id: "preview-destination",
       latitude: destinationLatitude,
@@ -725,6 +1004,15 @@ function formatDistance(value?: number | null) {
 
 function formatCoordinate(value?: number | null) {
   return typeof value === "number" ? value.toFixed(6) : "";
+}
+
+function parseCoordinateInput(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function isRideCancellable(status: string) {

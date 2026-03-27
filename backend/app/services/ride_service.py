@@ -16,10 +16,16 @@ from app.models.trip import Trip, TripStatus
 from app.models.trip_passenger import PassengerStatus, TripPassenger
 from app.models.user import User
 from app.models.van import Van, VanStatus
-from app.schemas.ride_request import RideRequestCreate, RideRequestSummary
+from app.schemas.ride_request import (
+    AdminPendingRideSummary,
+    RideRequestCreate,
+    RideRequestSummary,
+)
 from app.services.audit_service import record_dispatch_event
 from app.services.lifecycle_service import (
     RIDE_OPEN_STATUSES,
+    RIDE_PENDING_MATCH_STATUSES,
+    RIDE_PENDING_SCHEDULED_STATUSES,
     TRIP_POOLABLE_STATUSES,
     ride_is_cancellable,
     ride_is_terminal,
@@ -85,6 +91,7 @@ def serialize_ride_request(ride: RideRequest) -> RideRequestSummary:
         route_distance_meters=(route.get("distance_meters") or trip.total_distance_meters) if trip else None,
         route_duration_minutes=(route.get("duration_minutes") or trip.estimated_duration_minutes) if trip else None,
         next_stop_address=_resolve_next_stop_address(route),
+        driver_acknowledged_at=(trip.accepted_at or trip.started_at) if trip else None,
     )
 
 
@@ -96,6 +103,39 @@ def _resolve_next_stop_address(route: dict) -> str | None:
         }:
             return item.get("pickup_address")
     return route.get("destination_address")
+
+
+def _request_age_minutes(ride: RideRequest) -> int:
+    if ride.requested_at is None:
+        return 0
+    return max(0, int((_utc_now() - ride.requested_at).total_seconds() // 60))
+
+
+def _pending_dispatch_note(ride: RideRequest) -> str:
+    if ride.status in {
+        RideRequestStatus.SCHEDULED_REQUESTED,
+        RideRequestStatus.SCHEDULED_QUEUED,
+    }:
+        if ride.scheduled_time is not None:
+            return "Waiting for the dispatch window to open."
+        return "Scheduled ride is queued for later dispatch."
+    if ride.status == RideRequestStatus.MATCHING_AT_DISPATCH_WINDOW:
+        return "Dispatch window is open and the matcher is searching for a van."
+    return "Waiting for an eligible van or pooled trip."
+
+
+def serialize_admin_pending_ride(ride: RideRequest) -> AdminPendingRideSummary:
+    """Convert a pending ride request into an admin operations summary."""
+    summary = serialize_ride_request(ride)
+    return AdminPendingRideSummary(
+        **summary.model_dump(),
+        rider_name=ride.user.name if ride.user else None,
+        rider_email=ride.user.email if ride.user else None,
+        rider_phone=ride.user.phone if ride.user else None,
+        age_minutes=_request_age_minutes(ride),
+        request_kind="scheduled" if ride.scheduled_time else "immediate",
+        dispatch_note=_pending_dispatch_note(ride),
+    )
 
 
 def _trip_destination_coordinates(trip: Trip) -> tuple[float, float] | None:
@@ -788,6 +828,21 @@ def list_user_rides(db: Session, current_user: User) -> list[RideRequestSummary]
         .order_by(desc(RideRequest.requested_at))
     ).all()
     return [serialize_ride_request(ride) for ride in rides]
+
+
+def list_company_pending_requests(db: Session, company_id) -> list[AdminPendingRideSummary]:
+    """Return unmatched or queued ride requests for admin dispatch review."""
+    rides = db.scalars(
+        select(RideRequest)
+        .where(
+            RideRequest.company_id == company_id,
+            RideRequest.status.in_(
+                list(RIDE_PENDING_MATCH_STATUSES | RIDE_PENDING_SCHEDULED_STATUSES)
+            ),
+        )
+        .order_by(RideRequest.requested_at.asc())
+    ).all()
+    return [serialize_admin_pending_ride(ride) for ride in rides]
 
 
 def get_active_ride(db: Session, current_user: User) -> RideRequestSummary | None:

@@ -53,11 +53,12 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
 
   const dashboard = snapshot?.data.dashboard ?? fallbackDashboard;
   const trip = snapshot?.data.active_trip ?? fallbackTrip;
-  const notifications = snapshot?.data.notifications ?? [];
   const unreadNotifications = snapshot?.data.notifications_unread_count ?? 0;
   const insights = snapshot?.insights ?? fallbackInsights;
   const mapMarkers = buildDriverMapMarkers(dashboard, trip);
   const mapPolylines = buildRoutePolylines(trip?.route);
+  const tripAccepted = Boolean(trip?.accepted_at);
+  const tripStarted = Boolean(trip?.started_at);
 
   useEffect(() => {
     if (
@@ -397,6 +398,14 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
           {trip ? (
             <div className="stack">
               <InfoRow label="Status" value={trip.status.replaceAll("_", " ")} />
+              <InfoRow
+                label="Driver acknowledgement"
+                value={
+                  trip.accepted_at
+                    ? formatTimestamp(trip.accepted_at)
+                    : "Waiting for your acceptance"
+                }
+              />
               <InfoRow label="Passenger count" value={`${trip.passenger_count} passenger(s)`} />
               <InfoRow
                 label="Route duration"
@@ -414,29 +423,45 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
               />
 
               <div className="button-row">
-                <button
-                  className="primary-button"
-                  onClick={() =>
-                    token &&
-                    void runAction(() => api.startTrip(token, trip.id), "Trip started.")
-                  }
-                  type="button"
-                >
-                  Start trip
-                </button>
-                <button
-                  className="secondary-button"
-                  onClick={() =>
-                    token &&
-                    void runAction(
-                      () => api.completeTrip(token, trip.id),
-                      "Trip completed and van released.",
-                    )
-                  }
-                  type="button"
-                >
-                  Complete trip
-                </button>
+                {!tripAccepted && (
+                  <button
+                    className="primary-button"
+                    onClick={() =>
+                      token &&
+                      void runAction(() => api.acceptTrip(token, trip.id), "Trip accepted.")
+                    }
+                    type="button"
+                  >
+                    Accept trip
+                  </button>
+                )}
+                {tripAccepted && !tripStarted && (
+                  <button
+                    className="primary-button"
+                    onClick={() =>
+                      token &&
+                      void runAction(() => api.startTrip(token, trip.id), "Trip started.")
+                    }
+                    type="button"
+                  >
+                    Start trip
+                  </button>
+                )}
+                {tripStarted && (
+                  <button
+                    className="secondary-button"
+                    onClick={() =>
+                      token &&
+                      void runAction(
+                        () => api.completeTrip(token, trip.id),
+                        "Trip completed and van released.",
+                      )
+                    }
+                    type="button"
+                  >
+                    Complete trip
+                  </button>
+                )}
               </div>
 
               <div className="stack compact">
@@ -451,6 +476,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                       <span className="status-pill">{passenger.status}</span>
                       <button
                         className="ghost-button"
+                        disabled={!tripStarted}
                         onClick={() =>
                           token &&
                           void runAction(
@@ -469,6 +495,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                       </button>
                       <button
                         className="ghost-button"
+                        disabled={!tripStarted}
                         onClick={() =>
                           token &&
                           void runAction(
@@ -488,6 +515,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                       {["assigned", "notified"].includes(passenger.status) && (
                         <button
                           className="ghost-button"
+                          disabled={!tripStarted}
                           onClick={() =>
                             token &&
                             void runAction(
@@ -711,9 +739,9 @@ function resolveManualCoordinates(
   location: { latitude: string; longitude: string },
   dashboard: DriverDashboardSummary | null,
 ) {
-  const latitude = Number(location.latitude);
-  const longitude = Number(location.longitude);
-  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+  const latitude = parseCoordinateInput(location.latitude);
+  const longitude = parseCoordinateInput(location.longitude);
+  if (latitude !== null && longitude !== null) {
     return { latitude, longitude };
   }
   if (
@@ -744,4 +772,13 @@ function formatDistance(value?: number | null) {
     return `${(value / 1000).toFixed(1)} km`;
   }
   return `${value} m`;
+}
+
+function parseCoordinateInput(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : null;
 }

@@ -40,6 +40,7 @@ class Trip(Base):
     total_distance_meters = Column(Integer)
     estimated_duration_minutes = Column(Integer)
     actual_duration_minutes = Column(Integer)
+    accepted_at = Column(TIMESTAMP)
     started_at = Column(TIMESTAMP)
     completed_at = Column(TIMESTAMP)
     created_at = Column(TIMESTAMP, server_default=func.now())
