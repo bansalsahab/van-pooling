@@ -1,8 +1,10 @@
 """Ride request and dispatch helpers."""
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -11,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.geo import haversine_distance_meters, parse_point, point_value
+from app.models.company import Company
 from app.models.ride_request import RideRequest, RideRequestStatus
 from app.models.trip import Trip, TripStatus
 from app.models.trip_passenger import PassengerStatus, TripPassenger
@@ -37,6 +40,21 @@ from app.services.routing_service import rebuild_trip_route
 
 
 AVERAGE_SPEED_METERS_PER_MINUTE = 400.0
+REJECTION_REASON_MESSAGES = {
+    "trip_missing_van": "Trip is missing an assigned van.",
+    "trip_is_blocking": "Trip is already full and cannot take another rider.",
+    "driver_heartbeat_stale": "Driver location feed is stale.",
+    "missing_trip_destination": "Trip destination data is incomplete.",
+    "missing_van_coordinates": "Van does not have a live location fix.",
+    "destination_outside_cluster": "Destination is too far from the pooled trip destination.",
+    "schedule_incompatible": "Scheduled pickup windows do not overlap enough.",
+    "pickup_outside_radius": "Pickup is outside the configured dispatch radius.",
+    "detour_distance_too_high": "Pooling would add too much extra distance.",
+    "detour_time_too_high": "Pooling would add too much detour time.",
+    "van_status_ineligible": "Van is not in an eligible status.",
+    "driver_missing": "Van does not have a driver assigned.",
+    "van_full": "Van is already at full capacity.",
+}
 
 
 def _point(longitude: float, latitude: float):
@@ -47,6 +65,159 @@ def _point(longitude: float, latitude: float):
 def _utc_now() -> datetime:
     """Return a naive UTC timestamp consistent with the existing schema."""
     return datetime.utcnow()
+
+
+def _round_metric(value: float | None, digits: int = 4) -> float | None:
+    if value is None:
+        return None
+    return round(value, digits)
+
+
+def _resolve_matching_policy(db: Session, company_id) -> dict[str, Any]:
+    """Resolve effective matching thresholds and weights for the company."""
+    company = db.get(Company, company_id) if company_id else None
+    return {
+        "pickup_radius_meters": int(
+            company.max_pickup_radius_meters
+            if company and company.max_pickup_radius_meters
+            else settings.MATCHING_PICKUP_RADIUS_METERS
+        ),
+        "destination_cluster_radius_meters": settings.MATCHING_DESTINATION_CLUSTER_RADIUS_METERS,
+        "max_detour_minutes": int(
+            company.max_detour_minutes
+            if company and company.max_detour_minutes
+            else settings.MATCHING_MAX_DETOUR_MINUTES
+        ),
+        "max_extra_distance_meters": settings.MATCHING_MAX_EXTRA_DISTANCE_METERS,
+        "schedule_compatibility_minutes": settings.MATCHING_SCHEDULE_COMPATIBILITY_MINUTES,
+        "stale_driver_heartbeat_seconds": settings.MATCHING_STALE_DRIVER_HEARTBEAT_SECONDS,
+        "weights": {
+            "pickup": settings.MATCHING_SCORE_PICKUP_WEIGHT,
+            "destination": settings.MATCHING_SCORE_DESTINATION_WEIGHT,
+            "detour": settings.MATCHING_SCORE_DETOUR_WEIGHT,
+            "readiness": settings.MATCHING_SCORE_READINESS_WEIGHT,
+        },
+        "service_zone_configured": bool(company and company.service_zone),
+        "service_zone_enforced": False,
+        "policy_source": "company_override" if company else "global_defaults",
+    }
+
+
+def _score_breakdown(
+    *,
+    pickup_distance: float,
+    destination_distance: float | None,
+    extra_distance: float | None,
+    extra_minutes: float | None,
+    readiness_score: float,
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    pickup_score = min(1.0, pickup_distance / max(1, policy["pickup_radius_meters"]))
+    destination_score = (
+        min(1.0, destination_distance / max(1, policy["destination_cluster_radius_meters"]))
+        if destination_distance is not None
+        else None
+    )
+    detour_score = None
+    if extra_distance is not None and extra_minutes is not None:
+        detour_distance_score = min(
+            1.0,
+            extra_distance / max(1, policy["max_extra_distance_meters"]),
+        )
+        detour_time_score = min(
+            1.0,
+            extra_minutes / max(1, policy["max_detour_minutes"]),
+        )
+        detour_score = (detour_distance_score + detour_time_score) / 2
+
+    weights = policy["weights"]
+    total_score = (
+        pickup_score * weights["pickup"]
+        + (destination_score or 0.0) * weights["destination"]
+        + (detour_score or 0.0) * weights["detour"]
+        + readiness_score * weights["readiness"]
+    )
+    return {
+        "pickup_score": _round_metric(pickup_score),
+        "destination_score": _round_metric(destination_score),
+        "detour_score": _round_metric(detour_score),
+        "readiness_score": _round_metric(readiness_score),
+        "total_score": _round_metric(total_score),
+    }
+
+
+def _reason_labels(reasons: list[str]) -> list[str]:
+    return [REJECTION_REASON_MESSAGES.get(reason, reason.replace("_", " ")) for reason in reasons]
+
+
+def _matching_note(metadata: dict[str, Any]) -> str:
+    outcome = metadata.get("outcome")
+    selected = metadata.get("selected_candidate") or {}
+    top_reasons = metadata.get("top_rejection_reasons") or []
+    if outcome == "matched_pool":
+        return (
+            f"Pooled onto {selected.get('label') or 'an active trip'} because it had spare capacity "
+            f"and the best combined score."
+        )
+    if outcome == "matched_new_trip":
+        return (
+            f"Assigned {selected.get('label') or 'the nearest eligible van'} as the best available vehicle."
+        )
+    if outcome == "scheduled_queued":
+        return "Ride is queued until its scheduled dispatch window opens."
+    if top_reasons:
+        top_label = str(
+            top_reasons[0].get("label", "no eligible candidate is available")
+        ).strip()
+        return f"Still waiting because {top_label.rstrip('.').lower()}."
+    return "Waiting for an eligible van or pooled trip."
+
+
+def _summarize_rejection_reasons(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counter: Counter[str] = Counter()
+    for candidate in candidates:
+        for reason in candidate.get("rejection_reasons", []):
+            counter[reason] += 1
+    return [
+        {
+            "reason": reason,
+            "label": REJECTION_REASON_MESSAGES.get(reason, reason.replace("_", " ")),
+            "count": count,
+        }
+        for reason, count in counter.most_common(4)
+    ]
+
+
+def _matching_metadata_base(
+    ride: RideRequest,
+    policy: dict[str, Any],
+    *,
+    dispatch_window_open: bool | None = None,
+) -> dict[str, Any]:
+    return {
+        "evaluated_at": _utc_now().isoformat(),
+        "scheduled": ride.scheduled_time is not None,
+        "dispatch_window_open": dispatch_window_open,
+        "pickup_address": ride.pickup_address,
+        "destination_address": ride.destination_address,
+        "policy": policy,
+        "pool_candidates": [],
+        "van_candidates": [],
+        "selected_candidate": None,
+        "top_rejection_reasons": [],
+        "outcome": "pending_unmatched",
+    }
+
+
+def _apply_policy_advisories(metadata: dict[str, Any]) -> None:
+    policy = metadata.get("policy") or {}
+    advisories: list[str] = []
+    if policy.get("service_zone_configured") and not policy.get("service_zone_enforced"):
+        advisories.append(
+            "Company service zones are configured but not yet enforced in matching."
+        )
+    if advisories:
+        metadata["advisories"] = advisories
 
 
 def _normalize_datetime(value: datetime | None) -> datetime | None:
@@ -76,6 +247,7 @@ def serialize_ride_request(ride: RideRequest) -> RideRequestSummary:
         requested_at=ride.requested_at,
         estimated_wait_minutes=ride.estimated_wait_minutes,
         estimated_cost=ride.estimated_cost,
+        dispatch_metadata=ride.dispatch_metadata or {},
         trip_id=trip.id if trip else None,
         van_id=van.id if van else None,
         van_license_plate=van.license_plate if van else None,
@@ -112,6 +284,10 @@ def _request_age_minutes(ride: RideRequest) -> int:
 
 
 def _pending_dispatch_note(ride: RideRequest) -> str:
+    if ride.dispatch_metadata and isinstance(ride.dispatch_metadata, dict):
+        note = ride.dispatch_metadata.get("note")
+        if isinstance(note, str) and note.strip():
+            return note.strip()
     if ride.status in {
         RideRequestStatus.SCHEDULED_REQUESTED,
         RideRequestStatus.SCHEDULED_QUEUED,
@@ -154,6 +330,20 @@ def _trip_destination_coordinates(trip: Trip) -> tuple[float, float] | None:
 
 
 def _scheduled_time_compatible(trip: Trip, scheduled_time: datetime | None) -> bool:
+    return _scheduled_time_compatible_with_policy(
+        trip,
+        scheduled_time,
+        {
+            "schedule_compatibility_minutes": settings.MATCHING_SCHEDULE_COMPATIBILITY_MINUTES,
+        },
+    )
+
+
+def _scheduled_time_compatible_with_policy(
+    trip: Trip,
+    scheduled_time: datetime | None,
+    policy: dict[str, Any],
+) -> bool:
     if scheduled_time is None:
         return True
     trip_times = [
@@ -165,7 +355,7 @@ def _scheduled_time_compatible(trip: Trip, scheduled_time: datetime | None) -> b
         return True
     anchor = min(trip_times)
     return abs((anchor - scheduled_time).total_seconds()) <= (
-        settings.MATCHING_SCHEDULE_COMPATIBILITY_MINUTES * 60
+        int(policy["schedule_compatibility_minutes"]) * 60
     )
 
 
@@ -175,11 +365,11 @@ def _van_heartbeat_age_seconds(van: Van, now: datetime) -> float:
     return max(0.0, (now - van.last_location_update).total_seconds())
 
 
-def _van_readiness_score(van: Van, now: datetime) -> float:
+def _van_readiness_score(van: Van, now: datetime, policy: dict[str, Any]) -> float:
     heartbeat_age = _van_heartbeat_age_seconds(van, now)
     heartbeat_ratio = min(
         1.0,
-        heartbeat_age / max(1, settings.MATCHING_STALE_DRIVER_HEARTBEAT_SECONDS),
+        heartbeat_age / max(1, int(policy["stale_driver_heartbeat_seconds"])),
     )
     if van.status in {VanStatus.OFFLINE, VanStatus.MAINTENANCE} or van.driver_id is None:
         return 1.0
@@ -199,55 +389,308 @@ def _estimate_detour_metrics(
 
 
 def _pool_candidate_score(
-    trip: Trip,
+    van: Van,
     pickup_distance: float,
     destination_distance: float,
     now: datetime,
+) -> float:
+    return _pool_candidate_score_with_policy(
+        van,
+        pickup_distance,
+        destination_distance,
+        now,
+        {
+            "pickup_radius_meters": settings.MATCHING_PICKUP_RADIUS_METERS,
+            "destination_cluster_radius_meters": settings.MATCHING_DESTINATION_CLUSTER_RADIUS_METERS,
+            "max_extra_distance_meters": settings.MATCHING_MAX_EXTRA_DISTANCE_METERS,
+            "max_detour_minutes": settings.MATCHING_MAX_DETOUR_MINUTES,
+            "stale_driver_heartbeat_seconds": settings.MATCHING_STALE_DRIVER_HEARTBEAT_SECONDS,
+            "weights": {
+                "pickup": settings.MATCHING_SCORE_PICKUP_WEIGHT,
+                "destination": settings.MATCHING_SCORE_DESTINATION_WEIGHT,
+                "detour": settings.MATCHING_SCORE_DETOUR_WEIGHT,
+                "readiness": settings.MATCHING_SCORE_READINESS_WEIGHT,
+            },
+        },
+    )
+
+
+def _pool_candidate_score_with_policy(
+    van: Van,
+    pickup_distance: float,
+    destination_distance: float,
+    now: datetime,
+    policy: dict[str, Any],
 ) -> float:
     extra_distance, extra_minutes = _estimate_detour_metrics(
         pickup_distance,
         destination_distance,
     )
-    pickup_score = min(1.0, pickup_distance / max(1, settings.MATCHING_PICKUP_RADIUS_METERS))
+    pickup_score = min(1.0, pickup_distance / max(1, int(policy["pickup_radius_meters"])))
     destination_score = min(
         1.0,
-        destination_distance / max(1, settings.MATCHING_DESTINATION_CLUSTER_RADIUS_METERS),
+        destination_distance / max(1, int(policy["destination_cluster_radius_meters"])),
     )
     detour_distance_score = min(
         1.0,
-        extra_distance / max(1, settings.MATCHING_MAX_EXTRA_DISTANCE_METERS),
+        extra_distance / max(1, int(policy["max_extra_distance_meters"])),
     )
     detour_time_score = min(
         1.0,
-        extra_minutes / max(1, settings.MATCHING_MAX_DETOUR_MINUTES),
+        extra_minutes / max(1, int(policy["max_detour_minutes"])),
     )
     detour_score = (detour_distance_score + detour_time_score) / 2
-    readiness_score = _van_readiness_score(trip.van, now)
+    readiness_score = _van_readiness_score(van, now, policy)
     return (
-        pickup_score * settings.MATCHING_SCORE_PICKUP_WEIGHT
-        + destination_score * settings.MATCHING_SCORE_DESTINATION_WEIGHT
-        + detour_score * settings.MATCHING_SCORE_DETOUR_WEIGHT
-        + readiness_score * settings.MATCHING_SCORE_READINESS_WEIGHT
+        pickup_score * float(policy["weights"]["pickup"])
+        + destination_score * float(policy["weights"]["destination"])
+        + detour_score * float(policy["weights"]["detour"])
+        + readiness_score * float(policy["weights"]["readiness"])
     )
 
 
 def _new_trip_van_score(van: Van, pickup_distance: float, now: datetime) -> float:
-    pickup_score = min(1.0, pickup_distance / max(1, settings.MATCHING_PICKUP_RADIUS_METERS))
-    readiness_score = _van_readiness_score(van, now)
-    return (
-        pickup_score * settings.MATCHING_SCORE_PICKUP_WEIGHT
-        + readiness_score * settings.MATCHING_SCORE_READINESS_WEIGHT
+    return _new_trip_van_score_with_policy(
+        van,
+        pickup_distance,
+        now,
+        {
+            "pickup_radius_meters": settings.MATCHING_PICKUP_RADIUS_METERS,
+            "stale_driver_heartbeat_seconds": settings.MATCHING_STALE_DRIVER_HEARTBEAT_SECONDS,
+            "weights": {
+                "pickup": settings.MATCHING_SCORE_PICKUP_WEIGHT,
+                "readiness": settings.MATCHING_SCORE_READINESS_WEIGHT,
+            },
+        },
     )
+
+
+def _new_trip_van_score_with_policy(
+    van: Van,
+    pickup_distance: float,
+    now: datetime,
+    policy: dict[str, Any],
+) -> float:
+    pickup_score = min(1.0, pickup_distance / max(1, int(policy["pickup_radius_meters"])))
+    readiness_score = _van_readiness_score(van, now, policy)
+    return (
+        pickup_score * float(policy["weights"]["pickup"])
+        + readiness_score * float(policy["weights"]["readiness"])
+    )
+
+
+def _compact_candidate(candidate: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not candidate:
+        return None
+    compact = {
+        "candidate_type": candidate.get("candidate_type"),
+        "label": candidate.get("label"),
+        "trip_id": candidate.get("trip_id"),
+        "van_id": candidate.get("van_id"),
+        "score_breakdown": candidate.get("score_breakdown"),
+        "metrics": candidate.get("metrics"),
+    }
+    return {key: value for key, value in compact.items() if value is not None}
+
+
+def _compact_dispatch_event_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    if not metadata:
+        return {}
+    return {
+        "outcome": metadata.get("outcome"),
+        "note": metadata.get("note"),
+        "selected_candidate": _compact_candidate(metadata.get("selected_candidate")),
+        "top_rejection_reasons": metadata.get("top_rejection_reasons") or [],
+        "policy": metadata.get("policy") or {},
+        "candidate_counts": {
+            "pool": len(metadata.get("pool_candidates") or []),
+            "van": len(metadata.get("van_candidates") or []),
+        },
+    }
+
+
+def _build_pool_candidate_record(
+    trip: Trip,
+    ride: RideRequest,
+    policy: dict[str, Any],
+    now: datetime,
+) -> dict[str, Any]:
+    ride_destination = parse_point(ride.destination)
+    ride_pickup = parse_point(ride.pickup_location)
+    van = trip.van
+    heartbeat_age = _van_heartbeat_age_seconds(van, now) if van is not None else None
+    candidate = {
+        "candidate_type": "pooled_trip",
+        "trip_id": str(trip.id),
+        "van_id": str(trip.van_id) if trip.van_id is not None else None,
+        "label": (
+            f"{van.license_plate} on trip {str(trip.id)[:8]}"
+            if van is not None
+            else f"trip {str(trip.id)[:8]}"
+        ),
+        "trip_status": trip.status.value,
+        "rejection_reasons": [],
+        "accepted": False,
+        "metrics": {
+            "heartbeat_age_seconds": _round_metric(heartbeat_age, 2),
+            "occupancy": van.current_occupancy if van is not None else None,
+            "capacity": van.capacity if van is not None else None,
+        },
+    }
+    reasons: list[str] = []
+    if van is None:
+        reasons.append("trip_missing_van")
+    else:
+        if van.status not in {VanStatus.AVAILABLE, VanStatus.ON_TRIP}:
+            reasons.append("van_status_ineligible")
+        if van.driver_id is None:
+            reasons.append("driver_missing")
+        if (van.current_occupancy or 0) >= van.capacity:
+            reasons.append("van_full")
+        if trip_is_blocking(trip):
+            reasons.append("trip_is_blocking")
+        if heartbeat_age is None or heartbeat_age > policy["stale_driver_heartbeat_seconds"]:
+            reasons.append("driver_heartbeat_stale")
+
+    trip_destination = _trip_destination_coordinates(trip)
+    van_coordinates = parse_point(van.current_location) if van is not None else None
+    if trip_destination is None:
+        reasons.append("missing_trip_destination")
+    if van_coordinates is None:
+        reasons.append("missing_van_coordinates")
+
+    destination_distance = None
+    if ride_destination is not None and trip_destination is not None:
+        destination_distance = haversine_distance_meters(
+            ride_destination[0],
+            ride_destination[1],
+            trip_destination[0],
+            trip_destination[1],
+        )
+        candidate["metrics"]["destination_distance_meters"] = _round_metric(
+            destination_distance, 2
+        )
+        if destination_distance > policy["destination_cluster_radius_meters"]:
+            reasons.append("destination_outside_cluster")
+
+    if not _scheduled_time_compatible_with_policy(trip, ride.scheduled_time, policy):
+        reasons.append("schedule_incompatible")
+
+    pickup_distance = None
+    if ride_pickup is not None and van_coordinates is not None:
+        pickup_distance = haversine_distance_meters(
+            ride_pickup[0],
+            ride_pickup[1],
+            van_coordinates[0],
+            van_coordinates[1],
+        )
+        candidate["metrics"]["pickup_distance_meters"] = _round_metric(pickup_distance, 2)
+        if pickup_distance > policy["pickup_radius_meters"]:
+            reasons.append("pickup_outside_radius")
+
+    extra_distance = None
+    extra_minutes = None
+    if pickup_distance is not None and destination_distance is not None:
+        extra_distance, extra_minutes = _estimate_detour_metrics(
+            pickup_distance,
+            destination_distance,
+        )
+        candidate["metrics"]["extra_distance_meters"] = _round_metric(extra_distance, 2)
+        candidate["metrics"]["extra_minutes"] = _round_metric(extra_minutes, 2)
+        if extra_distance > policy["max_extra_distance_meters"]:
+            reasons.append("detour_distance_too_high")
+        if extra_minutes > policy["max_detour_minutes"]:
+            reasons.append("detour_time_too_high")
+
+    if not reasons and van is not None and pickup_distance is not None and destination_distance is not None:
+        readiness_score = _van_readiness_score(van, now, policy)
+        score_breakdown = _score_breakdown(
+            pickup_distance=pickup_distance,
+            destination_distance=destination_distance,
+            extra_distance=extra_distance,
+            extra_minutes=extra_minutes,
+            readiness_score=readiness_score,
+            policy=policy,
+        )
+        candidate["accepted"] = True
+        candidate["score_breakdown"] = score_breakdown
+    candidate["rejection_reasons"] = sorted(set(reasons))
+    candidate["rejection_labels"] = _reason_labels(candidate["rejection_reasons"])
+    return candidate
+
+
+def _build_van_candidate_record(
+    van: Van,
+    ride: RideRequest,
+    policy: dict[str, Any],
+    now: datetime,
+) -> dict[str, Any]:
+    ride_pickup = parse_point(ride.pickup_location)
+    heartbeat_age = _van_heartbeat_age_seconds(van, now)
+    candidate = {
+        "candidate_type": "available_van",
+        "van_id": str(van.id),
+        "label": van.license_plate,
+        "van_status": van.status.value,
+        "rejection_reasons": [],
+        "accepted": False,
+        "metrics": {
+            "heartbeat_age_seconds": _round_metric(heartbeat_age, 2),
+            "occupancy": van.current_occupancy,
+            "capacity": van.capacity,
+        },
+    }
+    reasons: list[str] = []
+    if van.status != VanStatus.AVAILABLE:
+        reasons.append("van_status_ineligible")
+    if van.driver_id is None:
+        reasons.append("driver_missing")
+    if (van.current_occupancy or 0) >= van.capacity:
+        reasons.append("van_full")
+    if heartbeat_age > policy["stale_driver_heartbeat_seconds"]:
+        reasons.append("driver_heartbeat_stale")
+
+    van_coordinates = parse_point(van.current_location)
+    if van_coordinates is None:
+        reasons.append("missing_van_coordinates")
+
+    pickup_distance = None
+    if ride_pickup is not None and van_coordinates is not None:
+        pickup_distance = haversine_distance_meters(
+            ride_pickup[0],
+            ride_pickup[1],
+            van_coordinates[0],
+            van_coordinates[1],
+        )
+        candidate["metrics"]["pickup_distance_meters"] = _round_metric(pickup_distance, 2)
+        if pickup_distance > policy["pickup_radius_meters"]:
+            reasons.append("pickup_outside_radius")
+
+    if not reasons and pickup_distance is not None:
+        readiness_score = _van_readiness_score(van, now, policy)
+        candidate["accepted"] = True
+        candidate["score_breakdown"] = _score_breakdown(
+            pickup_distance=pickup_distance,
+            destination_distance=None,
+            extra_distance=None,
+            extra_minutes=None,
+            readiness_score=readiness_score,
+            policy=policy,
+        )
+    candidate["rejection_reasons"] = sorted(set(reasons))
+    candidate["rejection_labels"] = _reason_labels(candidate["rejection_reasons"])
+    return candidate
 
 
 def _find_poolable_trip(
     db: Session,
     ride: RideRequest,
-) -> Trip | None:
+    policy: dict[str, Any],
+) -> tuple[Trip | None, list[dict[str, Any]], dict[str, Any] | None]:
     destination_coordinates = parse_point(ride.destination)
     pickup_coordinates = parse_point(ride.pickup_location)
     if destination_coordinates is None or pickup_coordinates is None:
-        return None
+        return None, [], None
 
     now = _utc_now()
     trips = db.scalars(
@@ -256,109 +699,58 @@ def _find_poolable_trip(
         .where(
             Trip.company_id == ride.company_id,
             Trip.status.in_(list(TRIP_POOLABLE_STATUSES)),
-            Van.driver_id.is_not(None),
-            Van.status.in_([VanStatus.AVAILABLE, VanStatus.ON_TRIP]),
-            Van.current_occupancy < Van.capacity,
         )
         .order_by(Trip.created_at.asc())
     ).all()
 
     best_trip: Trip | None = None
+    best_candidate: dict[str, Any] | None = None
     best_score = float("inf")
+    candidates: list[dict[str, Any]] = []
     for trip in trips:
-        if trip.van is None or trip_is_blocking(trip):
+        candidate = _build_pool_candidate_record(trip, ride, policy, now)
+        candidates.append(candidate)
+        if not candidate.get("accepted"):
             continue
-        if _van_heartbeat_age_seconds(trip.van, now) > settings.MATCHING_STALE_DRIVER_HEARTBEAT_SECONDS:
-            continue
-
-        trip_destination = _trip_destination_coordinates(trip)
-        van_coordinates = parse_point(trip.van.current_location)
-        if trip_destination is None or van_coordinates is None:
-            continue
-
-        destination_distance = haversine_distance_meters(
-            destination_coordinates[0],
-            destination_coordinates[1],
-            trip_destination[0],
-            trip_destination[1],
-        )
-        if destination_distance > settings.MATCHING_DESTINATION_CLUSTER_RADIUS_METERS:
-            continue
-
-        if not _scheduled_time_compatible(trip, ride.scheduled_time):
-            continue
-
-        pickup_distance = haversine_distance_meters(
-            pickup_coordinates[0],
-            pickup_coordinates[1],
-            van_coordinates[0],
-            van_coordinates[1],
-        )
-        if pickup_distance > settings.MATCHING_PICKUP_RADIUS_METERS:
-            continue
-
-        extra_distance, extra_minutes = _estimate_detour_metrics(
-            pickup_distance,
-            destination_distance,
-        )
-        if extra_distance > settings.MATCHING_MAX_EXTRA_DISTANCE_METERS:
-            continue
-        if extra_minutes > settings.MATCHING_MAX_DETOUR_MINUTES:
-            continue
-
-        score = _pool_candidate_score(
-            trip,
-            pickup_distance=pickup_distance,
-            destination_distance=destination_distance,
-            now=now,
-        )
+        score = float((candidate.get("score_breakdown") or {}).get("total_score") or 0.0)
         if score < best_score:
             best_trip = trip
+            best_candidate = candidate
             best_score = score
 
-    return best_trip
+    return best_trip, candidates, best_candidate
 
 
 def _find_best_available_van(
     db: Session,
     company_id,
     pickup_point,
-) -> Van | None:
-    pickup_coordinates = parse_point(pickup_point)
+    policy: dict[str, Any],
+) -> tuple[Van | None, list[dict[str, Any]], dict[str, Any] | None]:
+    ride = RideRequest(company_id=company_id, pickup_location=pickup_point)
     vans = db.scalars(
-        select(Van).where(
-            Van.company_id == company_id,
-            Van.status == VanStatus.AVAILABLE,
-            Van.driver_id.is_not(None),
-            Van.current_occupancy < Van.capacity,
-        )
+        select(Van).where(Van.company_id == company_id)
     ).all()
-    if pickup_coordinates is None:
-        return vans[0] if vans else None
+    if not vans:
+        return None, [], None
 
     now = _utc_now()
-    pickup_latitude, pickup_longitude = pickup_coordinates
-    scored_candidates: list[tuple[float, Van]] = []
+    best_van: Van | None = None
+    best_candidate: dict[str, Any] | None = None
+    best_score = float("inf")
+    candidates: list[dict[str, Any]] = []
     for van in vans:
-        if _van_heartbeat_age_seconds(van, now) > settings.MATCHING_STALE_DRIVER_HEARTBEAT_SECONDS:
+        candidate = _build_van_candidate_record(van, ride, policy, now)
+        candidates.append(candidate)
+        if not candidate.get("accepted"):
             continue
-        van_coordinates = parse_point(van.current_location)
-        if van_coordinates is None:
-            continue
-        pickup_distance = haversine_distance_meters(
-            pickup_latitude,
-            pickup_longitude,
-            van_coordinates[0],
-            van_coordinates[1],
-        )
-        if pickup_distance > settings.MATCHING_PICKUP_RADIUS_METERS:
-            continue
-        scored_candidates.append(
-            (_new_trip_van_score(van, pickup_distance, now), van)
-        )
+        score = float((candidate.get("score_breakdown") or {}).get("total_score") or 0.0)
+        if score < best_score:
+            best_van = van
+            best_candidate = candidate
+            best_score = score
 
-    scored_candidates.sort(key=lambda item: item[0])
-    return scored_candidates[0][1] if scored_candidates else None
+    return best_van, candidates, best_candidate
 
 
 def _attach_assignment_to_trip(
@@ -410,6 +802,7 @@ def _assign_ride_to_trip(
     trip: Trip,
     ride: RideRequest,
     current_user: User,
+    decision_metadata: dict[str, Any] | None = None,
 ) -> None:
     if trip.van is None:
         raise HTTPException(
@@ -425,6 +818,8 @@ def _assign_ride_to_trip(
     )
     trip.van.status = VanStatus.ON_TRIP
     ride.status = RideRequestStatus.MATCHED
+    if decision_metadata is not None:
+        ride.dispatch_metadata = decision_metadata
     db.add_all([assignment, trip.van, trip, ride])
     db.flush()
     synchronize_trip_lifecycle(trip)
@@ -443,6 +838,7 @@ def _assign_ride_to_trip(
             "assignment_type": "pooled",
             "van_id": str(trip.van_id),
             "van_license_plate": trip.van.license_plate if trip.van else None,
+            "dispatch_decision": _compact_dispatch_event_metadata(decision_metadata),
         },
     )
     record_dispatch_event(
@@ -457,6 +853,7 @@ def _assign_ride_to_trip(
         metadata={
             "assignment_type": "pooled",
             "passenger_count": len(trip.trip_passengers),
+            "dispatch_decision": _compact_dispatch_event_metadata(decision_metadata),
         },
     )
     _notify_ride_assignment(db, ride, trip)
@@ -467,6 +864,7 @@ def _create_trip_for_ride(
     current_user: User,
     ride: RideRequest,
     van: Van,
+    decision_metadata: dict[str, Any] | None = None,
 ) -> None:
     previous_ride_status = ride.status.value
     trip = Trip(
@@ -488,6 +886,8 @@ def _create_trip_for_ride(
     van.current_occupancy = min(van.capacity, (van.current_occupancy or 0) + 1)
     van.status = VanStatus.ON_TRIP
     ride.status = RideRequestStatus.MATCHED
+    if decision_metadata is not None:
+        ride.dispatch_metadata = decision_metadata
 
     db.add_all([trip, assignment, van, ride])
     db.flush()
@@ -511,6 +911,7 @@ def _create_trip_for_ride(
             "van_id": str(van.id),
             "van_license_plate": van.license_plate,
             "passenger_count": len(trip.trip_passengers),
+            "dispatch_decision": _compact_dispatch_event_metadata(decision_metadata),
         },
     )
     record_dispatch_event(
@@ -526,6 +927,7 @@ def _create_trip_for_ride(
             "assignment_type": "new_trip",
             "van_id": str(van.id),
             "van_license_plate": van.license_plate,
+            "dispatch_decision": _compact_dispatch_event_metadata(decision_metadata),
         },
     )
     _notify_ride_assignment(db, ride, trip)
@@ -548,29 +950,90 @@ def attempt_match_ride(db: Session, ride: RideRequest) -> bool:
         return ride.trip_passenger is not None
 
     current_user = db.get(User, ride.user_id)
+    policy = _resolve_matching_policy(db, ride.company_id)
+    dispatch_window_open = is_dispatch_window_open(ride)
+    metadata = _matching_metadata_base(
+        ride,
+        policy,
+        dispatch_window_open=dispatch_window_open,
+    )
+    _apply_policy_advisories(metadata)
     if current_user is None:
         ride.status = RideRequestStatus.FAILED_OPERATIONAL_ISSUE
+        metadata["outcome"] = RideRequestStatus.FAILED_OPERATIONAL_ISSUE.value
+        metadata["note"] = "Ride could not be matched because the rider account is missing."
+        ride.dispatch_metadata = metadata
         return False
 
     if ride.scheduled_time is not None:
-        if not is_dispatch_window_open(ride):
+        if not dispatch_window_open:
             ride.status = RideRequestStatus.SCHEDULED_QUEUED
+            metadata["outcome"] = "scheduled_queued"
+            metadata["candidate_counts"] = {"pool": 0, "van": 0}
+            metadata["note"] = _matching_note(metadata)
+            ride.dispatch_metadata = metadata
             return False
         ride.status = RideRequestStatus.MATCHING_AT_DISPATCH_WINDOW
     else:
         ride.status = RideRequestStatus.MATCHING
 
-    pooled_trip = _find_poolable_trip(db, ride)
+    pooled_trip, pool_candidates, selected_pool_candidate = _find_poolable_trip(
+        db,
+        ride,
+        policy,
+    )
+    metadata["pool_candidates"] = pool_candidates
+    metadata["candidate_counts"] = {
+        "pool": len(pool_candidates),
+        "van": 0,
+    }
     if pooled_trip is not None:
-        _assign_ride_to_trip(db, pooled_trip, ride, current_user)
+        metadata["selected_candidate"] = _compact_candidate(selected_pool_candidate)
+        metadata["top_rejection_reasons"] = _summarize_rejection_reasons(pool_candidates)
+        metadata["outcome"] = "matched_pool"
+        metadata["note"] = _matching_note(metadata)
+        ride.dispatch_metadata = metadata
+        _assign_ride_to_trip(
+            db,
+            pooled_trip,
+            ride,
+            current_user,
+            decision_metadata=metadata,
+        )
         return True
 
-    van = _find_best_available_van(db, ride.company_id, ride.pickup_location)
+    van, van_candidates, selected_van_candidate = _find_best_available_van(
+        db,
+        ride.company_id,
+        ride.pickup_location,
+        policy,
+    )
+    metadata["van_candidates"] = van_candidates
+    metadata["candidate_counts"] = {
+        "pool": len(pool_candidates),
+        "van": len(van_candidates),
+    }
+    metadata["top_rejection_reasons"] = _summarize_rejection_reasons(
+        pool_candidates + van_candidates
+    )
     if van is not None:
-        _create_trip_for_ride(db, current_user, ride, van)
+        metadata["selected_candidate"] = _compact_candidate(selected_van_candidate)
+        metadata["outcome"] = "matched_new_trip"
+        metadata["note"] = _matching_note(metadata)
+        ride.dispatch_metadata = metadata
+        _create_trip_for_ride(
+            db,
+            current_user,
+            ride,
+            van,
+            decision_metadata=metadata,
+        )
         return True
 
     ride.estimated_wait_minutes = max(ride.estimated_wait_minutes or 10, 10)
+    metadata["outcome"] = "pending_unmatched"
+    metadata["note"] = _matching_note(metadata)
+    ride.dispatch_metadata = metadata
     return False
 
 
@@ -633,6 +1096,17 @@ def create_ride_request(
 
     db.add(ride)
     db.flush()
+    if is_scheduled:
+        scheduled_metadata = _matching_metadata_base(
+            ride,
+            _resolve_matching_policy(db, current_user.company_id),
+            dispatch_window_open=False,
+        )
+        scheduled_metadata["outcome"] = "scheduled_queued"
+        scheduled_metadata["candidate_counts"] = {"pool": 0, "van": 0}
+        _apply_policy_advisories(scheduled_metadata)
+        scheduled_metadata["note"] = _matching_note(scheduled_metadata)
+        ride.dispatch_metadata = scheduled_metadata
     record_dispatch_event(
         db,
         company_id=current_user.company_id,
@@ -646,6 +1120,7 @@ def create_ride_request(
             "scheduled": is_scheduled,
             "pickup_address": ride.pickup_address,
             "destination_address": ride.destination_address,
+            "dispatch_decision": _compact_dispatch_event_metadata(ride.dispatch_metadata),
         },
     )
 
@@ -781,6 +1256,28 @@ def fail_ride_request(
 ) -> None:
     """Move a ride into a terminal failure state and notify admins/rider."""
     previous_ride_status = ride.status.value
+    metadata = (
+        dict(ride.dispatch_metadata)
+        if isinstance(ride.dispatch_metadata, dict)
+        else _matching_metadata_base(
+            ride,
+            _resolve_matching_policy(db, ride.company_id),
+            dispatch_window_open=is_dispatch_window_open(ride),
+        )
+    )
+    metadata["evaluated_at"] = _utc_now().isoformat()
+    metadata["outcome"] = failure_status.value
+    metadata["failure_status"] = failure_status.value
+    metadata["top_rejection_reasons"] = metadata.get("top_rejection_reasons") or _summarize_rejection_reasons(
+        (metadata.get("pool_candidates") or []) + (metadata.get("van_candidates") or [])
+    )
+    metadata["candidate_counts"] = metadata.get("candidate_counts") or {
+        "pool": len(metadata.get("pool_candidates") or []),
+        "van": len(metadata.get("van_candidates") or []),
+    }
+    metadata["note"] = reason
+    _apply_policy_advisories(metadata)
+    ride.dispatch_metadata = metadata
     ride.status = failure_status
     record_dispatch_event(
         db,
@@ -792,7 +1289,10 @@ def fail_ride_request(
         from_state=previous_ride_status,
         to_state=failure_status.value,
         reason=reason,
-        metadata={"failure_status": failure_status.value},
+        metadata={
+            "failure_status": failure_status.value,
+            "dispatch_decision": _compact_dispatch_event_metadata(metadata),
+        },
     )
     if ride.user_id is not None:
         queue_notification(

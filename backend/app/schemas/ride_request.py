@@ -1,6 +1,7 @@
 """Ride request schemas."""
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -33,6 +34,7 @@ class RideRequestSummary(BaseModel):
     requested_at: datetime | None = None
     estimated_wait_minutes: int | None = None
     estimated_cost: Decimal | None = None
+    dispatch_metadata: dict[str, Any] = Field(default_factory=dict)
     trip_id: UUID | None = None
     van_id: UUID | None = None
     van_license_plate: str | None = None

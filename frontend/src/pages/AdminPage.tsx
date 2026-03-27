@@ -20,6 +20,7 @@ import type {
   AdminLiveSnapshot,
   AdminPendingRideSummary,
   AIInsight,
+  DispatchDecisionMetadata,
   DispatchEventSummary,
   MapMarkerSpec,
   MapPolylineSpec,
@@ -711,6 +712,29 @@ export function AdminDashboard({
                         {event.to_state ? event.to_state.replaceAll("_", " ") : "n/a"}
                       </p>
                       {event.reason && <p>{event.reason}</p>}
+                      {getDispatchDecision(event.metadata) && (
+                        <div className="stack compact">
+                          <p>{getDispatchDecision(event.metadata)?.note}</p>
+                          {getSelectedCandidateLabel(getDispatchDecision(event.metadata)) && (
+                            <p>
+                              Selected:{" "}
+                              {getSelectedCandidateLabel(getDispatchDecision(event.metadata))}
+                            </p>
+                          )}
+                          {getDispatchReasonLabels(getDispatchDecision(event.metadata)).length >
+                            0 && (
+                            <div className="signal-row">
+                              {getDispatchReasonLabels(getDispatchDecision(event.metadata)).map(
+                                (label) => (
+                                  <span className="signal-pill" key={`${event.id}-${label}`}>
+                                    {label}
+                                  </span>
+                                ),
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="stack compact align-end">
                       <span className="status-pill">{event.actor_type}</span>
@@ -800,6 +824,28 @@ export function AdminDashboard({
                         {request.destination_address}
                       </p>
                       <p>{request.dispatch_note || "Waiting for dispatch."}</p>
+                      <p>{describeDispatchCounts(request.dispatch_metadata)}</p>
+                      {describeDispatchPolicy(request.dispatch_metadata) && (
+                        <p>{describeDispatchPolicy(request.dispatch_metadata)}</p>
+                      )}
+                      {getDispatchReasonLabels(request.dispatch_metadata).length > 0 && (
+                        <div className="signal-row">
+                          {getDispatchReasonLabels(request.dispatch_metadata).map((label) => (
+                            <span className="signal-pill" key={`${request.id}-${label}`}>
+                              {label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {getDispatchAdvisories(request.dispatch_metadata).length > 0 && (
+                        <div className="stack compact">
+                          {getDispatchAdvisories(request.dispatch_metadata).map((advisory) => (
+                            <p className="muted-copy" key={`${request.id}-${advisory}`}>
+                              {advisory}
+                            </p>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div className="stack compact align-end">
                       <span className="status-pill">
@@ -860,6 +906,78 @@ export function AdminNotificationsPage() {
         onUnreadCountChange={setUnreadCount}
       />
     </AppLayout>
+  );
+}
+
+function getDispatchDecision(
+  metadata: Record<string, unknown> | DispatchDecisionMetadata | undefined,
+): DispatchDecisionMetadata | null {
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+  const direct = metadata as DispatchDecisionMetadata & {
+    dispatch_decision?: DispatchDecisionMetadata;
+  };
+  if (direct.dispatch_decision && typeof direct.dispatch_decision === "object") {
+    return direct.dispatch_decision;
+  }
+  if (
+    "candidate_counts" in direct ||
+    "top_rejection_reasons" in direct ||
+    "selected_candidate" in direct ||
+    "policy" in direct ||
+    "note" in direct
+  ) {
+    return direct;
+  }
+  return null;
+}
+
+function getDispatchReasonLabels(metadata: DispatchDecisionMetadata | undefined | null) {
+  return (metadata?.top_rejection_reasons || [])
+    .map((item) => item.label)
+    .filter((label): label is string => Boolean(label));
+}
+
+function getSelectedCandidateLabel(metadata: DispatchDecisionMetadata | undefined | null) {
+  const candidate = metadata?.selected_candidate;
+  if (!candidate?.label) {
+    return null;
+  }
+  const score = candidate.score_breakdown?.total_score;
+  if (typeof score === "number") {
+    return `${candidate.label} (${score.toFixed(2)} score)`;
+  }
+  return candidate.label;
+}
+
+function describeDispatchCounts(metadata: DispatchDecisionMetadata | undefined | null) {
+  const pool = metadata?.candidate_counts?.pool ?? metadata?.pool_candidates?.length ?? 0;
+  const van = metadata?.candidate_counts?.van ?? metadata?.van_candidates?.length ?? 0;
+  return `Matcher reviewed ${pool} pooled trip(s) and ${van} direct van candidate(s).`;
+}
+
+function describeDispatchPolicy(metadata: DispatchDecisionMetadata | undefined | null) {
+  const policy = metadata?.policy;
+  if (!policy) {
+    return null;
+  }
+  const pickupRadius = policy.pickup_radius_meters;
+  const maxDetour = policy.max_detour_minutes;
+  const scheduleWindow = policy.schedule_compatibility_minutes;
+  if (
+    typeof pickupRadius !== "number" ||
+    typeof maxDetour !== "number" ||
+    typeof scheduleWindow !== "number"
+  ) {
+    return null;
+  }
+  return `Policy: pickup within ${pickupRadius} m, max detour ${maxDetour} min, schedule window ${scheduleWindow} min.`;
+}
+
+function getDispatchAdvisories(metadata: DispatchDecisionMetadata | undefined | null) {
+  return (metadata?.advisories || []).filter(
+    (advisory): advisory is string => typeof advisory === "string" && advisory.length > 0,
   );
 }
 

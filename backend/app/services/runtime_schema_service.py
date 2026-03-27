@@ -23,3 +23,15 @@ def ensure_trip_schema() -> None:
                 "ON trips(accepted_at)"
             )
         )
+
+
+def ensure_ride_request_schema() -> None:
+    """Backfill lightweight ride request schema changes for local development."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "ride_requests" not in inspector.get_table_names():
+            return
+
+        columns = {column["name"] for column in inspector.get_columns("ride_requests")}
+        if "dispatch_metadata" not in columns:
+            connection.execute(text("ALTER TABLE ride_requests ADD COLUMN dispatch_metadata JSON"))
