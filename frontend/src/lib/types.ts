@@ -74,6 +74,44 @@ export interface RoutePlan {
   updated_at?: string | null;
 }
 
+export interface MatchingReasonSummary {
+  reason: string;
+  label: string;
+  count?: number;
+}
+
+export interface MatchingCandidateSummary {
+  candidate_type?: string;
+  label?: string;
+  trip_id?: string | null;
+  van_id?: string | null;
+  metrics?: Record<string, unknown>;
+  score_breakdown?: Record<string, unknown>;
+  rejection_reasons?: string[];
+  rejection_labels?: string[];
+}
+
+export interface DispatchDecisionMetadata {
+  evaluated_at?: string;
+  scheduled?: boolean;
+  dispatch_window_open?: boolean | null;
+  pickup_address?: string;
+  destination_address?: string;
+  policy?: Record<string, unknown>;
+  pool_candidates?: MatchingCandidateSummary[];
+  van_candidates?: MatchingCandidateSummary[];
+  selected_candidate?: MatchingCandidateSummary | null;
+  top_rejection_reasons?: MatchingReasonSummary[];
+  outcome?: string;
+  note?: string;
+  advisories?: string[];
+  candidate_counts?: {
+    pool?: number;
+    van?: number;
+  };
+  failure_status?: string;
+}
+
 export interface RideSummary {
   id: string;
   status: string;
@@ -83,6 +121,7 @@ export interface RideSummary {
   requested_at?: string | null;
   estimated_wait_minutes?: number | null;
   estimated_cost?: string | number | null;
+  dispatch_metadata?: DispatchDecisionMetadata;
   trip_id?: string | null;
   van_id?: string | null;
   van_license_plate?: string | null;

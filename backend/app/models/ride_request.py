@@ -6,7 +6,7 @@ from sqlalchemy import Column, Enum, ForeignKey, Integer, Numeric, Text, TIMESTA
 from sqlalchemy.orm import relationship
 
 from app.database import Base
-from app.db_types import GeographyOrText, UUIDType
+from app.db_types import GeographyOrText, JSONType, UUIDType
 
 
 class RideRequestStatus(str, enum.Enum):
@@ -56,6 +56,7 @@ class RideRequest(Base):
     expires_at = Column(TIMESTAMP)
     estimated_wait_minutes = Column(Integer)
     estimated_cost = Column(Numeric(10, 2))
+    dispatch_metadata = Column(JSONType, default=dict)
     actual_pickup_time = Column(TIMESTAMP)
     actual_dropoff_time = Column(TIMESTAMP)
     rating = Column(Integer)

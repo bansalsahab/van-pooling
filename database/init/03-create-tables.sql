@@ -63,6 +63,7 @@ CREATE TABLE ride_requests (
     expires_at TIMESTAMP,
     estimated_wait_minutes INTEGER,
     estimated_cost DECIMAL(10, 2),
+    dispatch_metadata JSONB DEFAULT '{}'::jsonb,
     actual_pickup_time TIMESTAMP,
     actual_dropoff_time TIMESTAMP,
     rating INTEGER CHECK (rating >= 1 AND rating <= 5),
