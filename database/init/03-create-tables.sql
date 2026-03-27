@@ -124,6 +124,23 @@ CREATE TABLE notifications (
     status notification_status DEFAULT 'pending',
     metadata JSONB,
     sent_at TIMESTAMP,
+    read_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Dispatch audit events table
+CREATE TABLE dispatch_events (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
+    ride_id UUID REFERENCES ride_requests(id) ON DELETE SET NULL,
+    trip_id UUID REFERENCES trips(id) ON DELETE SET NULL,
+    actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    actor_type VARCHAR(50) NOT NULL,
+    event_type VARCHAR(100) NOT NULL,
+    from_state VARCHAR(100),
+    to_state VARCHAR(100),
+    reason TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP DEFAULT NOW()
 );
 

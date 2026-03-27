@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { AppLayout } from "../components/Layout";
 import { CopilotPanel } from "../components/CopilotPanel";
 import { LiveMap } from "../components/LiveMap";
-import { AIInsightsPanel, LiveStatusBadge, MetricPanel } from "../components/common";
+import { NotificationCenterPanel } from "../components/NotificationPanel";
+import {
+  AIInsightsPanel,
+  LiveEventsPanel,
+  LiveStatusBadge,
+  MetricPanel,
+} from "../components/common";
 import { useCopilot } from "../hooks/useCopilot";
 import { useLiveStream } from "../hooks/useLiveStream";
 import { api } from "../lib/api";
@@ -12,6 +19,7 @@ import type {
   AdminDashboardSummary,
   AdminLiveSnapshot,
   AIInsight,
+  DispatchEventSummary,
   MapMarkerSpec,
   MapPolylineSpec,
   TripSummary,
@@ -25,8 +33,9 @@ export function AdminDashboard({
 }: {
   section?: "overview" | "fleet" | "trips";
 }) {
+  const navigate = useNavigate();
   const { token, user } = useAuth();
-  const { snapshot, connectionState, lastMessageAt, streamError } =
+  const { snapshot, connectionState, lastMessageAt, streamError, recentEvents } =
     useLiveStream<AdminLiveSnapshot>(token);
   const { brief, reply, loading, asking, error: copilotError, refreshBrief, askCopilot } =
     useCopilot(token);
@@ -39,6 +48,9 @@ export function AdminDashboard({
   const [fallbackAlerts, setFallbackAlerts] = useState<AlertSummary[]>([]);
   const [fallbackInsights, setFallbackInsights] = useState<AIInsight[]>([]);
   const [selectedVanByTrip, setSelectedVanByTrip] = useState<Record<string, string>>({});
+  const [selectedTripHistoryId, setSelectedTripHistoryId] = useState<string | null>(null);
+  const [selectedTripEvents, setSelectedTripEvents] = useState<DispatchEventSummary[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [userForm, setUserForm] = useState({
@@ -66,6 +78,8 @@ export function AdminDashboard({
   const drivers = snapshot?.data.drivers ?? fallbackDrivers;
   const trips = snapshot?.data.trips ?? fallbackTrips;
   const alerts = snapshot?.data.alerts ?? fallbackAlerts;
+  const notifications = snapshot?.data.notifications ?? [];
+  const unreadNotifications = snapshot?.data.notifications_unread_count ?? 0;
   const insights = snapshot?.insights ?? fallbackInsights;
   const fleetMarkers = useMemo(() => buildFleetMarkers(vans), [vans]);
   const tripPolylines = useMemo(() => buildTripPolylines(trips), [trips]);
@@ -101,6 +115,29 @@ export function AdminDashboard({
     setFallbackTrips(tripData);
     setFallbackAlerts(alertData);
     setFallbackInsights(aiInsights);
+    if (selectedTripHistoryId) {
+      const history = await api.getAdminTripEvents(token, selectedTripHistoryId);
+      setSelectedTripEvents(history);
+    }
+  }
+
+  async function loadTripHistory(tripId: string) {
+    if (!token) return;
+    setSelectedTripHistoryId(tripId);
+    setEventsLoading(true);
+    setError(null);
+    try {
+      const history = await api.getAdminTripEvents(token, tripId);
+      setSelectedTripEvents(history);
+    } catch (historyError) {
+      setError(
+        historyError instanceof Error
+          ? historyError.message
+          : "Could not load trip history.",
+      );
+    } finally {
+      setEventsLoading(false);
+    }
   }
 
   async function handleCreateUser(event: React.FormEvent) {
@@ -215,6 +252,7 @@ export function AdminDashboard({
 
   return (
     <AppLayout
+      notificationUnreadCount={unreadNotifications}
       title="Operations Command"
       subtitle={`A live control surface for ${user?.company_name || "your company"}.`}
     >
@@ -223,21 +261,25 @@ export function AdminDashboard({
           label="Employees"
           value={String(dashboard?.employees_count || 0)}
           detail="registered riders"
+          onClick={() => navigate("/admin/fleet")}
         />
         <MetricPanel
           label="Drivers"
           value={String(dashboard?.drivers_count || 0)}
           detail="active staff"
+          onClick={() => navigate("/admin/fleet")}
         />
         <MetricPanel
           label="Available Vans"
           value={String(dashboard?.available_vans || 0)}
           detail={`${dashboard?.total_vans || 0} total vans`}
+          onClick={() => navigate("/admin/fleet")}
         />
         <MetricPanel
           label="Open Alerts"
           value={String(dashboard?.open_alerts || 0)}
           detail="dispatch exceptions"
+          onClick={() => navigate("/admin")}
         />
         <section className="metric-panel">
           <span>Realtime Feed</span>
@@ -613,6 +655,13 @@ export function AdminDashboard({
                           >
                             Cancel
                           </button>
+                          <button
+                            className="ghost-button"
+                            onClick={() => void loadTripHistory(trip.id)}
+                            type="button"
+                          >
+                            History
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -621,8 +670,81 @@ export function AdminDashboard({
               </table>
             </div>
           </section>
+          <section className="panel span-two">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Trip Audit Trail</p>
+                <h3>
+                  {selectedTripHistoryId
+                    ? `Trip ${selectedTripHistoryId.slice(0, 8)} history`
+                    : "Select a trip to inspect dispatch history"}
+                </h3>
+              </div>
+            </div>
+            {eventsLoading ? (
+              <p className="muted-copy">Loading persisted dispatch events...</p>
+            ) : selectedTripHistoryId && selectedTripEvents.length > 0 ? (
+              <div className="stack compact">
+                {selectedTripEvents.map((event) => (
+                  <div className="list-card compact-card event-card" key={event.id}>
+                    <div>
+                      <strong>{event.event_type.replaceAll(".", " ")}</strong>
+                      <p>
+                        {event.actor_name || event.actor_type} moved
+                        {" "}
+                        {event.from_state ? event.from_state.replaceAll("_", " ") : "n/a"}
+                        {" -> "}
+                        {event.to_state ? event.to_state.replaceAll("_", " ") : "n/a"}
+                      </p>
+                      {event.reason && <p>{event.reason}</p>}
+                    </div>
+                    <div className="stack compact align-end">
+                      <span className="status-pill">{event.actor_type}</span>
+                      <span className="muted-copy">
+                        {event.created_at ? formatTimestamp(event.created_at) : "recent"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-copy">
+                Use the history action on any trip row to inspect its persisted dispatch events.
+              </p>
+            )}
+          </section>
         </div>
       )}
+
+      {section === "trips" && <LiveEventsPanel events={recentEvents} title="Dispatch event feed" />}
+    </AppLayout>
+  );
+}
+
+export function AdminNotificationsPage() {
+  const { token, user } = useAuth();
+  const { snapshot } = useLiveStream<AdminLiveSnapshot>(token);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    setUnreadCount(snapshot?.data.notifications_unread_count ?? 0);
+  }, [snapshot?.data.notifications_unread_count]);
+
+  return (
+    <AppLayout
+      notificationUnreadCount={unreadCount}
+      title="Notifications"
+      subtitle={`Track alerts, dispatch changes, and rider-facing notices for ${user?.company_name || "your company"}.`}
+    >
+      <NotificationCenterPanel
+        title="Operations notifications"
+        eyebrow="Notifications"
+        includeAlerts
+        initialNotifications={snapshot?.data.notifications ?? []}
+        initialUnreadCount={snapshot?.data.notifications_unread_count ?? 0}
+        emptyMessage="Operational alerts, reassignments, and rider notifications will appear here."
+        onUnreadCountChange={setUnreadCount}
+      />
     </AppLayout>
   );
 }

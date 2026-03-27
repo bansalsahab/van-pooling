@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from app.api.deps import _resolve_user_from_token, get_current_user_from_stream_token
 from app.database import SessionLocal
 from app.models.user import User
-from app.services.live_service import build_live_snapshot
+from app.services.live_service import build_live_events, build_live_snapshot
 
 router = APIRouter(prefix="/live", tags=["live"])
 
@@ -35,6 +35,7 @@ async def live_stream(
 
     async def event_generator():
         last_payload = ""
+        previous_snapshot = None
         sequence = 0
 
         while True:
@@ -47,13 +48,22 @@ async def live_stream(
 
             serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True)
             if serialized != last_payload:
+                events = build_live_events(previous_snapshot, payload)
                 yield (
                     f"id: {sequence}\n"
                     "event: snapshot\n"
                     f"data: {serialized}\n\n"
                 )
-                last_payload = serialized
                 sequence += 1
+                for event in events:
+                    yield (
+                        f"id: {sequence}\n"
+                        f"event: {event['event']}\n"
+                        f"data: {json.dumps(event['payload'], separators=(',', ':'), sort_keys=True)}\n\n"
+                    )
+                    sequence += 1
+                last_payload = serialized
+                previous_snapshot = payload
             else:
                 yield (
                     "event: heartbeat\n"
@@ -94,6 +104,7 @@ async def live_websocket(websocket: WebSocket) -> None:
 
     await websocket.accept()
     last_payload = ""
+    previous_snapshot = None
     sequence = 0
 
     try:
@@ -105,6 +116,7 @@ async def live_websocket(websocket: WebSocket) -> None:
 
             serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True)
             if serialized != last_payload:
+                events = build_live_events(previous_snapshot, payload)
                 await websocket.send_json(
                     {
                         "event": "snapshot.updated",
@@ -112,8 +124,18 @@ async def live_websocket(websocket: WebSocket) -> None:
                         "payload": payload,
                     }
                 )
-                last_payload = serialized
                 sequence += 1
+                for event in events:
+                    await websocket.send_json(
+                        {
+                            "event": event["event"],
+                            "sequence": sequence,
+                            "payload": event["payload"],
+                        }
+                    )
+                    sequence += 1
+                last_payload = serialized
+                previous_snapshot = payload
             else:
                 await websocket.send_json(
                     {

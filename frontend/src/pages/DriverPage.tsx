@@ -1,9 +1,17 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { AppLayout } from "../components/Layout";
 import { CopilotPanel } from "../components/CopilotPanel";
 import { LiveMap } from "../components/LiveMap";
-import { AIInsightsPanel, InfoRow, LiveStatusBadge, MetricPanel } from "../components/common";
+import { NotificationCenterPanel } from "../components/NotificationPanel";
+import {
+  AIInsightsPanel,
+  InfoRow,
+  LiveEventsPanel,
+  LiveStatusBadge,
+  MetricPanel,
+} from "../components/common";
 import { useCopilot } from "../hooks/useCopilot";
 import { useLiveStream } from "../hooks/useLiveStream";
 import { api } from "../lib/api";
@@ -21,8 +29,9 @@ import { useAuth } from "../state/auth";
 type SharingMode = "off" | "gps" | "simulated";
 
 export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: boolean }) {
+  const navigate = useNavigate();
   const { token, user } = useAuth();
-  const { snapshot, connectionState, lastMessageAt, streamError } =
+  const { snapshot, connectionState, lastMessageAt, streamError, recentEvents } =
     useLiveStream<DriverLiveSnapshot>(token);
   const { brief, reply, loading, asking, error: copilotError, refreshBrief, askCopilot } =
     useCopilot(token);
@@ -44,6 +53,8 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
 
   const dashboard = snapshot?.data.dashboard ?? fallbackDashboard;
   const trip = snapshot?.data.active_trip ?? fallbackTrip;
+  const notifications = snapshot?.data.notifications ?? [];
+  const unreadNotifications = snapshot?.data.notifications_unread_count ?? 0;
   const insights = snapshot?.insights ?? fallbackInsights;
   const mapMarkers = buildDriverMapMarkers(dashboard, trip);
   const mapPolylines = buildRoutePolylines(trip?.route);
@@ -183,6 +194,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
 
   return (
     <AppLayout
+      notificationUnreadCount={unreadNotifications}
       title={operationsOnly ? "Trip Operations" : "Driver Console"}
       subtitle={`Dispatch and fulfil trips for ${user?.name}.`}
     >
@@ -193,11 +205,13 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
               label="Assigned Van"
               value={dashboard?.van?.license_plate || "Not assigned"}
               detail={dashboard?.van?.status || "offline"}
+              onClick={() => navigate("/driver/operations")}
             />
             <MetricPanel
               label="Occupancy"
               value={`${dashboard?.van?.current_occupancy || 0}/${dashboard?.van?.capacity || 0}`}
               detail="passengers onboard"
+              onClick={() => navigate("/driver/operations")}
             />
             <MetricPanel
               label="Active Trip"
@@ -205,6 +219,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
               detail={
                 trip ? `${trip.passenger_count} passenger(s)` : "waiting for dispatch"
               }
+              onClick={() => navigate("/driver/operations")}
             />
             <section className="metric-panel">
               <span>Realtime Feed</span>
@@ -518,7 +533,51 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
         </section>
       </div>
 
-      {!operationsOnly && <AIInsightsPanel insights={insights} title="Live dispatch cues" />}
+      <div className="content-grid two-column">
+        {!operationsOnly ? (
+          <AIInsightsPanel insights={insights} title="Live dispatch cues" />
+        ) : (
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Operational Cues</p>
+                <h3>Trip guidance</h3>
+              </div>
+            </div>
+            <p className="muted-copy">
+              Return to the main driver console to review the full AI dispatch brief.
+            </p>
+          </section>
+        )}
+        <LiveEventsPanel events={recentEvents} title="Trip event feed" />
+      </div>
+    </AppLayout>
+  );
+}
+
+export function DriverNotificationsPage() {
+  const { token, user } = useAuth();
+  const { snapshot } = useLiveStream<DriverLiveSnapshot>(token);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    setUnreadCount(snapshot?.data.notifications_unread_count ?? 0);
+  }, [snapshot?.data.notifications_unread_count]);
+
+  return (
+    <AppLayout
+      notificationUnreadCount={unreadCount}
+      title="Notifications"
+      subtitle={`Review dispatch, route, and vehicle updates for ${user?.name}.`}
+    >
+      <NotificationCenterPanel
+        title="Driver notifications"
+        eyebrow="Notifications"
+        initialNotifications={snapshot?.data.notifications ?? []}
+        initialUnreadCount={snapshot?.data.notifications_unread_count ?? 0}
+        emptyMessage="Trip assignments, route changes, and stale GPS warnings will appear here."
+        onUnreadCountChange={setUnreadCount}
+      />
     </AppLayout>
   );
 }

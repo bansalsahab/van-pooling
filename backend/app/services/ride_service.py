@@ -17,6 +17,7 @@ from app.models.trip_passenger import PassengerStatus, TripPassenger
 from app.models.user import User
 from app.models.van import Van, VanStatus
 from app.schemas.ride_request import RideRequestCreate, RideRequestSummary
+from app.services.audit_service import record_dispatch_event
 from app.services.lifecycle_service import (
     RIDE_OPEN_STATUSES,
     TRIP_POOLABLE_STATUSES,
@@ -377,6 +378,7 @@ def _assign_ride_to_trip(
         )
 
     assignment = _attach_assignment_to_trip(trip, ride, current_user)
+    previous_ride_status = ride.status.value
     trip.van.current_occupancy = min(
         trip.van.capacity,
         (trip.van.current_occupancy or 0) + 1,
@@ -388,6 +390,35 @@ def _assign_ride_to_trip(
     synchronize_trip_lifecycle(trip)
     rebuild_trip_route(db, trip)
     ride.estimated_wait_minutes = min(ride.estimated_wait_minutes or 8, 8)
+    record_dispatch_event(
+        db,
+        company_id=ride.company_id,
+        event_type="ride.matched",
+        actor_type="system",
+        ride_id=ride.id,
+        trip_id=trip.id,
+        from_state=previous_ride_status,
+        to_state=ride.status.value,
+        metadata={
+            "assignment_type": "pooled",
+            "van_id": str(trip.van_id),
+            "van_license_plate": trip.van.license_plate if trip.van else None,
+        },
+    )
+    record_dispatch_event(
+        db,
+        company_id=ride.company_id,
+        event_type="trip.rider_added",
+        actor_type="system",
+        ride_id=ride.id,
+        trip_id=trip.id,
+        from_state=None,
+        to_state=trip.status.value,
+        metadata={
+            "assignment_type": "pooled",
+            "passenger_count": len(trip.trip_passengers),
+        },
+    )
     _notify_ride_assignment(db, ride, trip)
 
 
@@ -397,6 +428,7 @@ def _create_trip_for_ride(
     ride: RideRequest,
     van: Van,
 ) -> None:
+    previous_ride_status = ride.status.value
     trip = Trip(
         van=van,
         company_id=current_user.company_id,
@@ -426,6 +458,36 @@ def _create_trip_for_ride(
             ride.estimated_wait_minutes or 6,
             trip.estimated_duration_minutes,
         )
+    record_dispatch_event(
+        db,
+        company_id=current_user.company_id,
+        event_type="trip.created",
+        actor_type="system",
+        ride_id=ride.id,
+        trip_id=trip.id,
+        from_state=None,
+        to_state=trip.status.value,
+        metadata={
+            "van_id": str(van.id),
+            "van_license_plate": van.license_plate,
+            "passenger_count": len(trip.trip_passengers),
+        },
+    )
+    record_dispatch_event(
+        db,
+        company_id=current_user.company_id,
+        event_type="ride.matched",
+        actor_type="system",
+        ride_id=ride.id,
+        trip_id=trip.id,
+        from_state=previous_ride_status,
+        to_state=ride.status.value,
+        metadata={
+            "assignment_type": "new_trip",
+            "van_id": str(van.id),
+            "van_license_plate": van.license_plate,
+        },
+    )
     _notify_ride_assignment(db, ride, trip)
 
 
@@ -531,6 +593,21 @@ def create_ride_request(
 
     db.add(ride)
     db.flush()
+    record_dispatch_event(
+        db,
+        company_id=current_user.company_id,
+        event_type="ride.requested",
+        actor_type=current_user.role.value,
+        actor_user_id=current_user.id,
+        ride_id=ride.id,
+        from_state=None,
+        to_state=ride.status.value,
+        metadata={
+            "scheduled": is_scheduled,
+            "pickup_address": ride.pickup_address,
+            "destination_address": ride.destination_address,
+        },
+    )
 
     matched = False
     if not is_scheduled:
@@ -588,6 +665,8 @@ def cancel_ride_request(
 
     assignment = ride.trip_passenger
     trip = assignment.trip if assignment else None
+    previous_ride_status = ride.status.value
+    previous_trip_status = trip.status.value if trip is not None else None
     if assignment is not None:
         remaining_assignments = [
             item for item in trip.trip_passengers if item.id != assignment.id
@@ -597,6 +676,10 @@ def cancel_ride_request(
             if trip.van.current_occupancy == 0 and trip.status != TripStatus.COMPLETED:
                 trip.van.status = VanStatus.AVAILABLE
             db.add(trip.van)
+        if trip is not None and assignment in trip.trip_passengers:
+            trip.trip_passengers.remove(assignment)
+        if ride.trip_passenger is assignment:
+            ride.trip_passenger = None
         db.delete(assignment)
         db.flush()
         if trip is not None:
@@ -612,6 +695,31 @@ def cancel_ride_request(
             db.add(trip)
 
     ride.status = RideRequestStatus.CANCELLED_BY_EMPLOYEE
+    record_dispatch_event(
+        db,
+        company_id=current_user.company_id,
+        event_type="ride.cancelled_by_employee",
+        actor_type=current_user.role.value,
+        actor_user_id=current_user.id,
+        ride_id=ride.id,
+        trip_id=trip.id if trip is not None else None,
+        from_state=previous_ride_status,
+        to_state=ride.status.value,
+        reason="Cancelled by rider before pickup.",
+    )
+    if trip is not None and trip.status.value != previous_trip_status:
+        record_dispatch_event(
+            db,
+            company_id=current_user.company_id,
+            event_type="trip.cancelled",
+            actor_type=current_user.role.value,
+            actor_user_id=current_user.id,
+            ride_id=ride.id,
+            trip_id=trip.id,
+            from_state=previous_trip_status,
+            to_state=trip.status.value,
+            reason="Trip cancelled because the last remaining rider cancelled before pickup.",
+        )
     queue_notification(
         db,
         current_user.id,
@@ -632,7 +740,20 @@ def fail_ride_request(
     reason: str,
 ) -> None:
     """Move a ride into a terminal failure state and notify admins/rider."""
+    previous_ride_status = ride.status.value
     ride.status = failure_status
+    record_dispatch_event(
+        db,
+        company_id=ride.company_id,
+        event_type="ride.dispatch_failed",
+        actor_type="system",
+        ride_id=ride.id,
+        trip_id=ride.trip_passenger.trip_id if ride.trip_passenger else None,
+        from_state=previous_ride_status,
+        to_state=failure_status.value,
+        reason=reason,
+        metadata={"failure_status": failure_status.value},
+    )
     if ride.user_id is not None:
         queue_notification(
             db,

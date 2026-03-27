@@ -41,6 +41,7 @@ class Notification(Base):
     )
     metadata_json = Column("metadata", JSONType)
     sent_at = Column(TIMESTAMP)
+    read_at = Column(TIMESTAMP)
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     user = relationship("User", back_populates="notifications")

@@ -4,9 +4,13 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./state/auth";
 import type { UserProfile } from "./lib/types";
 import { AuthPage, defaultRoute } from "./pages/AuthPage";
-import { EmployeeDashboard, EmployeeHistoryPage } from "./pages/EmployeePage";
-import { DriverDashboard } from "./pages/DriverPage";
-import { AdminDashboard } from "./pages/AdminPage";
+import {
+  EmployeeDashboard,
+  EmployeeHistoryPage,
+  EmployeeNotificationsPage,
+} from "./pages/EmployeePage";
+import { DriverDashboard, DriverNotificationsPage } from "./pages/DriverPage";
+import { AdminDashboard, AdminNotificationsPage } from "./pages/AdminPage";
 
 function ProtectedRoute({
   role,
@@ -55,6 +59,14 @@ export default function App() {
         }
       />
       <Route
+        path="/employee/notifications"
+        element={
+          <ProtectedRoute role="employee">
+            <EmployeeNotificationsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/driver"
         element={
           <ProtectedRoute role="driver">
@@ -67,6 +79,14 @@ export default function App() {
         element={
           <ProtectedRoute role="driver">
             <DriverDashboard operationsOnly />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/driver/notifications"
+        element={
+          <ProtectedRoute role="driver">
+            <DriverNotificationsPage />
           </ProtectedRoute>
         }
       />
@@ -91,6 +111,14 @@ export default function App() {
         element={
           <ProtectedRoute role="admin">
             <AdminDashboard section="trips" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/notifications"
+        element={
+          <ProtectedRoute role="admin">
+            <AdminNotificationsPage />
           </ProtectedRoute>
         }
       />

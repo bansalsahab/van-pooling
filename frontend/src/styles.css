@@ -143,6 +143,11 @@ a {
   cursor: pointer;
 }
 
+.segment-control button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .segment-control .active {
   background: linear-gradient(135deg, #58b6ff, #2d7dff);
   color: white;
@@ -296,6 +301,7 @@ input::placeholder {
   display: flex;
   flex-direction: column;
   gap: 2rem;
+  min-height: 100vh;
 }
 
 .brand {
@@ -339,6 +345,10 @@ input::placeholder {
 }
 
 .nav-links a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   padding: 0.9rem 1rem;
   color: #bbcbdb;
   border-radius: 16px;
@@ -347,6 +357,15 @@ input::placeholder {
 .nav-links a.active {
   background: rgba(88, 182, 255, 0.14);
   color: #f4f8fb;
+}
+
+.nav-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: #ff7b67;
+  box-shadow: 0 0 0 4px rgba(255, 123, 103, 0.12);
+  flex-shrink: 0;
 }
 
 .sidebar-footer {
@@ -397,6 +416,23 @@ input::placeholder {
 .panel,
 .metric-panel {
   padding: 1.25rem;
+}
+
+.metric-panel-clickable {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease;
+}
+
+.metric-panel-clickable:hover {
+  transform: translateY(-2px);
+  border-color: rgba(132, 191, 255, 0.26);
+  background: rgba(16, 30, 50, 0.82);
 }
 
 .span-two {
@@ -467,6 +503,16 @@ input::placeholder {
   background: rgba(88, 182, 255, 0.12);
   color: #9ed3ff;
   font-size: 0.82rem;
+}
+
+.status-pill.unread {
+  background: rgba(255, 138, 76, 0.16);
+  color: #ffc6a8;
+}
+
+.status-pill.read {
+  background: rgba(255, 255, 255, 0.07);
+  color: #b2c5d7;
 }
 
 .live-badge {
@@ -687,8 +733,105 @@ input::placeholder {
   padding: 0.9rem 1rem;
 }
 
+.event-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  background:
+    linear-gradient(135deg, rgba(88, 182, 255, 0.08), rgba(255, 138, 76, 0.06)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.event-card strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  text-transform: capitalize;
+}
+
 .route-step-card strong {
   display: block;
+}
+
+.notification-panel {
+  background:
+    linear-gradient(145deg, rgba(18, 41, 76, 0.82), rgba(10, 22, 40, 0.94)),
+    rgba(9, 19, 35, 0.64);
+}
+
+.notification-rail {
+  padding: 1rem;
+  border-radius: 20px;
+  background:
+    linear-gradient(145deg, rgba(14, 33, 60, 0.88), rgba(9, 19, 35, 0.96)),
+    rgba(9, 19, 35, 0.64);
+}
+
+.notification-rail .panel-header {
+  margin-bottom: 0.75rem;
+}
+
+.notification-rail .panel-header h3 {
+  font-size: 1rem;
+}
+
+.notification-rail .button-row {
+  justify-content: flex-end;
+}
+
+.notification-rail .notification-card {
+  flex-direction: column;
+}
+
+.notification-rail .notification-card-header {
+  flex-direction: column;
+}
+
+.notification-rail .notification-card-footer {
+  gap: 0.4rem;
+}
+
+.notification-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.notification-card.is-unread {
+  border-color: rgba(255, 138, 76, 0.2);
+  background:
+    linear-gradient(135deg, rgba(255, 138, 76, 0.12), rgba(88, 182, 255, 0.06)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.notification-card.is-read {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.notification-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  flex: 1;
+}
+
+.notification-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.notification-card-header strong {
+  display: block;
+  text-transform: capitalize;
+}
+
+.notification-card-footer {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .align-end {

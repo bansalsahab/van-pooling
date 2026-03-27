@@ -58,6 +58,19 @@ def authenticate_user(db: Session, email: str, password: str) -> User:
     return user
 
 
+def _ensure_requested_role(user: User, requested_role: UserRole | None) -> None:
+    """Reject logins routed through the wrong portal role."""
+    if requested_role is None or user.role == requested_role:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            f"This account is registered as {user.role.value}. "
+            f"Use the {user.role.value} portal to sign in."
+        ),
+    )
+
+
 def build_token_response(user: User) -> TokenResponse:
     """Create token payload plus normalized user profile."""
     claims = {
@@ -74,11 +87,13 @@ def build_token_response(user: User) -> TokenResponse:
 def login_user(db: Session, payload: LoginRequest) -> TokenResponse:
     """Authenticate and return fresh tokens."""
     user = authenticate_user(db, payload.email, payload.password)
+    _ensure_requested_role(user, payload.requested_role)
     return build_token_response(user)
 
 
 def register_user(db: Session, payload: RegisterRequest) -> TokenResponse:
     """Register a user, creating a company when bootstrapping a tenant."""
+    requested_role = payload.requested_role or UserRole.EMPLOYEE
     existing_user = db.scalar(select(User).where(User.email == payload.email.lower()))
     if existing_user:
         raise HTTPException(
@@ -89,9 +104,23 @@ def register_user(db: Session, payload: RegisterRequest) -> TokenResponse:
     company = db.scalar(
         select(Company).where(Company.domain == payload.company_domain.lower())
     )
-    role = UserRole.EMPLOYEE
+    if requested_role == UserRole.DRIVER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Driver accounts are created by admins. Use the driver portal only to sign in.",
+        )
 
-    if company is None and payload.company_name:
+    if requested_role == UserRole.ADMIN:
+        if company is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin accounts for an existing company must be created by another admin.",
+            )
+        if not payload.company_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Provide company_name to bootstrap a new admin workspace.",
+            )
         company = Company(
             name=payload.company_name,
             domain=payload.company_domain.lower(),
@@ -104,6 +133,8 @@ def register_user(db: Session, payload: RegisterRequest) -> TokenResponse:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Company not found. Provide company_name to bootstrap a new tenant.",
         )
+    else:
+        role = UserRole.EMPLOYEE
 
     user = User(
         company_id=company.id,

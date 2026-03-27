@@ -3,7 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import { AppLayout } from "../components/Layout";
 import { CopilotPanel } from "../components/CopilotPanel";
 import { LiveMap } from "../components/LiveMap";
-import { AIInsightsPanel, InfoRow, LiveStatusBadge, RideTable } from "../components/common";
+import { NotificationCenterPanel } from "../components/NotificationPanel";
+import {
+  AIInsightsPanel,
+  InfoRow,
+  LiveEventsPanel,
+  LiveStatusBadge,
+  RideTable,
+} from "../components/common";
 import { useCopilot } from "../hooks/useCopilot";
 import { useLiveStream } from "../hooks/useLiveStream";
 import { api } from "../lib/api";
@@ -28,7 +35,7 @@ const EMPTY_RIDE_FORM = {
 
 export function EmployeeDashboard() {
   const { token, user } = useAuth();
-  const { snapshot, connectionState, lastMessageAt, streamError } =
+  const { snapshot, connectionState, lastMessageAt, streamError, recentEvents } =
     useLiveStream<EmployeeLiveSnapshot>(token);
   const { brief, reply, loading, asking, error: copilotError, refreshBrief, askCopilot } =
     useCopilot(token);
@@ -121,6 +128,8 @@ export function EmployeeDashboard() {
 
   const activeRide = snapshot?.data.active_ride ?? fallbackActiveRide;
   const rideHistory = snapshot?.data.ride_history ?? fallbackRideHistory;
+  const notifications = snapshot?.data.notifications ?? [];
+  const unreadNotifications = snapshot?.data.notifications_unread_count ?? 0;
   const insights = snapshot?.insights ?? [];
   const mapMarkers = useMemo(
     () => (activeRide ? buildActiveRideMarkers(activeRide) : buildPreviewMarkers(form)),
@@ -274,6 +283,7 @@ export function EmployeeDashboard() {
 
   return (
     <AppLayout
+      notificationUnreadCount={unreadNotifications}
       title="Employee Ride Desk"
       subtitle={`Book and track commute requests for ${user?.name}.`}
     >
@@ -542,6 +552,8 @@ export function EmployeeDashboard() {
         onAsk={askCopilot}
       />
 
+      <LiveEventsPanel events={recentEvents} title="Ride lifecycle feed" />
+
       <section className="panel">
         <div className="panel-header">
           <div>
@@ -570,6 +582,7 @@ export function EmployeeHistoryPage() {
 
   return (
     <AppLayout
+      notificationUnreadCount={snapshot?.data.notifications_unread_count ?? 0}
       title="Ride History"
       subtitle="A focused view of your booked, matched, and completed commute requests."
     >
@@ -583,6 +596,33 @@ export function EmployeeHistoryPage() {
         </div>
         <RideTable rides={history} />
       </section>
+    </AppLayout>
+  );
+}
+
+export function EmployeeNotificationsPage() {
+  const { token } = useAuth();
+  const { snapshot } = useLiveStream<EmployeeLiveSnapshot>(token);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    setUnreadCount(snapshot?.data.notifications_unread_count ?? 0);
+  }, [snapshot?.data.notifications_unread_count]);
+
+  return (
+    <AppLayout
+      notificationUnreadCount={unreadCount}
+      title="Notifications"
+      subtitle="Review ride assignment, arrival, delay, and completion updates in one place."
+    >
+      <NotificationCenterPanel
+        title="Ride notifications"
+        eyebrow="Notifications"
+        initialNotifications={snapshot?.data.notifications ?? []}
+        initialUnreadCount={snapshot?.data.notifications_unread_count ?? 0}
+        emptyMessage="Ride assignment, arrival, and cancellation updates will appear here."
+        onUnreadCountChange={setUnreadCount}
+      />
     </AppLayout>
   );
 }

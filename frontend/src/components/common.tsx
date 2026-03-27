@@ -1,4 +1,10 @@
-import type { AIInsight, LiveConnectionState, RideSummary, VanSummary } from "../lib/types";
+import type {
+  AIInsight,
+  LiveConnectionState,
+  LiveOperationalEvent,
+  RideSummary,
+  VanSummary,
+} from "../lib/types";
 
 export function InfoRow({ label, value }: { label: string; value: string }) {
   return (
@@ -13,13 +19,26 @@ export function MetricPanel({
   label,
   value,
   detail,
+  onClick,
 }: {
   label: string;
   value: string;
   detail: string;
+  onClick?: () => void;
 }) {
+  const className = `metric-panel ${onClick ? "metric-panel-clickable" : ""}`;
+  if (onClick) {
+    return (
+      <button className={className} onClick={onClick} type="button">
+        <span>{label}</span>
+        <strong>{value}</strong>
+        <p>{detail}</p>
+      </button>
+    );
+  }
+
   return (
-    <section className="metric-panel">
+    <section className={className}>
       <span>{label}</span>
       <strong>{value}</strong>
       <p>{detail}</p>
@@ -209,6 +228,48 @@ export function FleetRadar({
   );
 }
 
+export function LiveEventsPanel({
+  events,
+  title = "Operational Events",
+}: {
+  events: LiveOperationalEvent[];
+  title?: string;
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <p className="eyebrow">Typed Events</p>
+          <h3>{title}</h3>
+        </div>
+      </div>
+      {events.length === 0 ? (
+        <p className="muted-copy">
+          New live events will appear here as rides, trips, vans, alerts, and notifications change.
+        </p>
+      ) : (
+        <div className="stack compact">
+          {events.map((event) => (
+            <article
+              className="list-card compact-card event-card"
+              key={`${event.sequence ?? "event"}-${event.event}-${event.payload.entity_id ?? "unknown"}`}
+            >
+              <div>
+                <strong>{formatEventHeadline(event)}</strong>
+                <p>{formatEventSummary(event)}</p>
+              </div>
+              <div className="stack compact align-end">
+                <span className="status-pill">{event.payload.action}</span>
+                <span className="muted-copy">{formatTimestamp(event.payload.generated_at)}</span>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function normalize(value: number, min: number, max: number) {
   if (min === max) {
     return 50;
@@ -229,4 +290,29 @@ function formatTimestamp(value: string) {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+function formatEventHeadline(event: LiveOperationalEvent) {
+  const eventLabel = event.event.replace(".", " ");
+  const suffix = event.payload.entity_id
+    ? ` ${event.payload.entity_id.slice(0, 8)}`
+    : "";
+  return `${eventLabel}${suffix}`;
+}
+
+function formatEventSummary(event: LiveOperationalEvent) {
+  const fields = event.payload.changed_fields;
+  if (fields.length > 0) {
+    return `Changed: ${fields.slice(0, 4).join(", ")}`;
+  }
+
+  if (event.payload.after && typeof event.payload.after.status === "string") {
+    return `Current status: ${event.payload.after.status.replaceAll("_", " ")}`;
+  }
+
+  if (event.payload.before && !event.payload.after) {
+    return `${event.payload.entity_type} was removed from the active live view.`;
+  }
+
+  return `${event.payload.entity_type} ${event.payload.action}.`;
 }

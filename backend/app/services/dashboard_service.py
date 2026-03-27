@@ -3,7 +3,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.geo import parse_point
-from app.models.notification import Notification, NotificationStatus
 from app.models.ride_request import RideRequest, RideRequestStatus
 from app.models.trip import Trip, TripStatus
 from app.models.trip_passenger import TripPassenger
@@ -14,6 +13,7 @@ from app.schemas.trip import DriverTripSummary, TripPassengerSummary, TripSummar
 from app.schemas.user import UserSummary
 from app.schemas.van import VanSummary
 from app.services.lifecycle_service import RIDE_PENDING_MATCH_STATUSES, RIDE_PENDING_SCHEDULED_STATUSES, TRIP_ACTIVE_STATUSES
+from app.services.notification_service import count_open_alerts
 
 
 def serialize_van_summary(van: Van, driver_name: str | None = None) -> VanSummary:
@@ -113,12 +113,8 @@ def get_admin_dashboard(db: Session, company_id, admin_user_id) -> AdminDashboar
             Trip.status.in_(list(TRIP_ACTIVE_STATUSES)),
         )
     ) or 0
-    open_alerts = db.scalar(
-        select(func.count(Notification.id)).where(
-            Notification.user_id == admin_user_id,
-            Notification.status == NotificationStatus.PENDING,
-        )
-    ) or 0
+    admin_user = db.get(User, admin_user_id)
+    open_alerts = count_open_alerts(db, admin_user) if admin_user is not None else 0
 
     return AdminDashboardSummary(
         company_id=company_id,

@@ -182,6 +182,44 @@ export interface AlertSummary {
   resolved_at?: string | null;
 }
 
+export interface NotificationSummary {
+  id: string;
+  type: string;
+  title?: string | null;
+  message: string;
+  status: string;
+  kind?: string | null;
+  severity?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  ride_id?: string | null;
+  trip_id?: string | null;
+  created_at?: string | null;
+  sent_at?: string | null;
+  read_at?: string | null;
+}
+
+export interface NotificationFeed {
+  items: NotificationSummary[];
+  unread_count: number;
+}
+
+export interface DispatchEventSummary {
+  id: string;
+  company_id: string;
+  ride_id?: string | null;
+  trip_id?: string | null;
+  actor_user_id?: string | null;
+  actor_name?: string | null;
+  actor_type: string;
+  event_type: string;
+  from_state?: string | null;
+  to_state?: string | null;
+  reason?: string | null;
+  metadata: Record<string, unknown>;
+  created_at?: string | null;
+}
+
 export interface AdminUserCreateInput {
   name: string;
   email: string;
@@ -241,6 +279,8 @@ export interface EmployeeLiveSnapshot {
   data: {
     active_ride: RideSummary | null;
     ride_history: RideSummary[];
+    notifications: NotificationSummary[];
+    notifications_unread_count: number;
   };
   insights: AIInsight[];
 }
@@ -251,6 +291,8 @@ export interface DriverLiveSnapshot {
   data: {
     dashboard: DriverDashboardSummary | null;
     active_trip: DriverTripSummary | null;
+    notifications: NotificationSummary[];
+    notifications_unread_count: number;
   };
   insights: AIInsight[];
 }
@@ -265,6 +307,8 @@ export interface AdminLiveSnapshot {
     drivers: UserProfile[];
     trips: TripSummary[];
     alerts: AlertSummary[];
+    notifications: NotificationSummary[];
+    notifications_unread_count: number;
   };
   insights: AIInsight[];
 }
@@ -279,6 +323,35 @@ export type LiveConnectionState =
   | "live"
   | "reconnecting"
   | "error";
+
+export type LiveEventName =
+  | "snapshot.updated"
+  | "ride.updated"
+  | "trip.updated"
+  | "van.updated"
+  | "driver.updated"
+  | "alert.created"
+  | "alert.resolved"
+  | "notification.created"
+  | "notification.updated"
+  | "heartbeat";
+
+export interface LiveOperationalEventPayload {
+  entity_type: string;
+  entity_id?: string | null;
+  action: string;
+  role: UserRole;
+  generated_at: string;
+  changed_fields: string[];
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+}
+
+export interface LiveOperationalEvent {
+  event: Exclude<LiveEventName, "snapshot.updated" | "heartbeat">;
+  sequence?: number;
+  payload: LiveOperationalEventPayload;
+}
 
 export interface MapMarkerSpec {
   id: string;

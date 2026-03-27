@@ -4,12 +4,36 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy import desc, select
+from sqlalchemy import desc, inspect, select, text
 from sqlalchemy.orm import Session
 
+from app.database import engine
 from app.models.notification import Notification, NotificationStatus, NotificationType
 from app.models.user import User, UserRole
 from app.schemas.alert import AlertSummary
+from app.schemas.notification import NotificationFeed, NotificationSummary
+
+
+DEFAULT_NOTIFICATION_LIMIT = 12
+
+
+def ensure_notification_schema() -> None:
+    """Backfill lightweight notification schema changes for local development."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "notifications" not in inspector.get_table_names():
+            return
+
+        columns = {column["name"] for column in inspector.get_columns("notifications")}
+        if "read_at" not in columns:
+            connection.execute(text("ALTER TABLE notifications ADD COLUMN read_at TIMESTAMP"))
+
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_notifications_user_read_at "
+                "ON notifications(user_id, read_at)"
+            )
+        )
 
 
 def queue_notification(
@@ -67,6 +91,76 @@ def create_admin_alert(
     notify_company_admins(db, company_id, title, message, payload)
 
 
+def serialize_notification(notification: Notification) -> NotificationSummary:
+    """Convert a notification row into a user-facing summary."""
+    metadata = notification.metadata_json or {}
+    return NotificationSummary(
+        id=notification.id,
+        type=notification.type.value,
+        title=notification.title,
+        message=notification.message,
+        status=notification.status.value,
+        kind=_string_or_none(metadata.get("kind")),
+        severity=_string_or_none(metadata.get("severity")),
+        entity_type=_string_or_none(metadata.get("entity_type")),
+        entity_id=_string_or_none(metadata.get("entity_id")),
+        ride_id=_uuid_or_none(metadata.get("ride_id")),
+        trip_id=_uuid_or_none(metadata.get("trip_id")),
+        created_at=notification.created_at,
+        sent_at=notification.sent_at,
+        read_at=notification.read_at,
+    )
+
+
+def list_recent_notifications(
+    db: Session,
+    user_id,
+    *,
+    limit: int = 12,
+    include_alerts: bool = False,
+) -> list[NotificationSummary]:
+    """Return recent notifications for a user."""
+    notifications = _filter_notifications(
+        _list_user_notification_rows(db, user_id),
+        include_alerts=include_alerts,
+    )
+    return [serialize_notification(item) for item in notifications[:limit]]
+
+
+def count_unread_notifications(
+    db: Session,
+    user_id,
+    *,
+    include_alerts: bool = False,
+) -> int:
+    """Count unread notifications for a user."""
+    notifications = _filter_notifications(
+        _list_user_notification_rows(db, user_id),
+        include_alerts=include_alerts,
+    )
+    return sum(1 for notification in notifications if notification.read_at is None)
+
+
+def list_notification_feed(
+    db: Session,
+    current_user: User,
+    *,
+    limit: int = DEFAULT_NOTIFICATION_LIMIT,
+    include_alerts: bool | None = None,
+) -> NotificationFeed:
+    """Return a notification inbox payload for the signed-in user."""
+    effective_include_alerts = _effective_include_alerts(current_user, include_alerts)
+    limit = max(1, min(limit, 50))
+    notifications = _filter_notifications(
+        _list_user_notification_rows(db, current_user.id),
+        include_alerts=effective_include_alerts,
+    )
+    return NotificationFeed(
+        items=[serialize_notification(item) for item in notifications[:limit]],
+        unread_count=sum(1 for item in notifications if item.read_at is None),
+    )
+
+
 def serialize_alert(notification: Notification) -> AlertSummary:
     """Convert a notification row into an admin alert shape."""
     metadata = notification.metadata_json or {}
@@ -116,6 +210,49 @@ def count_open_alerts(db: Session, admin_user: User) -> int:
     return len(list_admin_alerts(db, admin_user))
 
 
+def mark_notification_read(
+    db: Session,
+    notification_id,
+    current_user: User,
+) -> NotificationSummary:
+    """Mark a single notification as read for the current user."""
+    notification = _get_user_notification_or_404(db, notification_id, current_user)
+    if notification.read_at is None:
+        notification.read_at = datetime.utcnow()
+        db.add(notification)
+        db.commit()
+        db.refresh(notification)
+    return serialize_notification(notification)
+
+
+def mark_all_notifications_read(
+    db: Session,
+    current_user: User,
+    *,
+    include_alerts: bool | None = None,
+    limit: int = DEFAULT_NOTIFICATION_LIMIT,
+) -> NotificationFeed:
+    """Mark all visible notifications as read for the current user."""
+    effective_include_alerts = _effective_include_alerts(current_user, include_alerts)
+    notifications = _filter_notifications(
+        _list_user_notification_rows(db, current_user.id),
+        include_alerts=effective_include_alerts,
+    )
+    unread_notifications = [item for item in notifications if item.read_at is None]
+    if unread_notifications:
+        read_at = datetime.utcnow()
+        for notification in unread_notifications:
+            notification.read_at = read_at
+            db.add(notification)
+        db.commit()
+    return list_notification_feed(
+        db,
+        current_user,
+        limit=limit,
+        include_alerts=effective_include_alerts,
+    )
+
+
 def resolve_admin_alert(
     db: Session,
     alert_id,
@@ -136,10 +273,61 @@ def resolve_admin_alert(
 
     notification.status = NotificationStatus.SENT
     notification.sent_at = datetime.utcnow()
+    if notification.read_at is None:
+        notification.read_at = notification.sent_at
     db.add(notification)
     db.commit()
     db.refresh(notification)
     return serialize_alert(notification)
+
+
+def _list_user_notification_rows(db: Session, user_id) -> list[Notification]:
+    return db.scalars(
+        select(Notification)
+        .where(Notification.user_id == user_id)
+        .order_by(desc(Notification.created_at))
+    ).all()
+
+
+def _filter_notifications(
+    notifications: list[Notification],
+    *,
+    include_alerts: bool,
+) -> list[Notification]:
+    if include_alerts:
+        return notifications
+    return [item for item in notifications if not _is_operational_alert(item)]
+
+
+def _effective_include_alerts(current_user: User, include_alerts: bool | None) -> bool:
+    if current_user.role != UserRole.ADMIN:
+        return False
+    if include_alerts is None:
+        return True
+    return include_alerts
+
+
+def _get_user_notification_or_404(
+    db: Session,
+    notification_id,
+    current_user: User,
+) -> Notification:
+    notification = db.scalar(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == current_user.id,
+        )
+    )
+    if notification is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notification not found.",
+        )
+    return notification
+
+
+def _is_operational_alert(notification: Notification) -> bool:
+    return (notification.metadata_json or {}).get("kind") == "operational_alert"
 
 
 def _string_or_none(value) -> str | None:

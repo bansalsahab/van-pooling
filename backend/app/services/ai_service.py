@@ -10,6 +10,11 @@ from app.models.trip import TripStatus
 from app.models.user import User, UserRole
 from app.models.van import VanStatus
 from app.schemas.ai import AICopilotBrief, AICopilotReply, AIInsight
+from app.services.audit_service import (
+    list_company_dispatch_events,
+    list_ride_dispatch_events,
+    list_trip_dispatch_events,
+)
 from app.services.dashboard_service import (
     get_admin_dashboard,
     get_driver_dashboard,
@@ -461,18 +466,35 @@ def _build_role_context(
             "timestamp": datetime.utcnow().isoformat(),
             "company_name": current_user.company.name if current_user.company else None,
             "active_ride": active_ride.model_dump(mode="json") if active_ride else None,
+            "recent_events": [
+                item.model_dump(mode="json")
+                for item in (
+                    list_ride_dispatch_events(db, current_user.company_id, active_ride.id, limit=10)
+                    if active_ride
+                    else []
+                )
+            ],
             "insights": [item.model_dump(mode="json") for item in insights],
             "openai_model": settings.OPENAI_MODEL,
         }
 
     if current_user.role == UserRole.DRIVER:
         dashboard = get_driver_dashboard(db, current_user)
+        active_trip = dashboard.active_trip
         return {
             "role": current_user.role.value,
             "user_name": current_user.name,
             "timestamp": datetime.utcnow().isoformat(),
             "company_name": current_user.company.name if current_user.company else None,
             "dashboard": dashboard.model_dump(mode="json"),
+            "recent_events": [
+                item.model_dump(mode="json")
+                for item in (
+                    list_trip_dispatch_events(db, current_user.company_id, active_trip.id, limit=12)
+                    if active_trip
+                    else []
+                )
+            ],
             "insights": [item.model_dump(mode="json") for item in insights],
             "openai_model": settings.OPENAI_MODEL,
         }
@@ -502,6 +524,10 @@ def _build_role_context(
         "trips": [item.model_dump(mode="json") for item in trips[:12]],
         "drivers": [item.model_dump(mode="json") for item in drivers[:12]],
         "alerts": [item.model_dump(mode="json") for item in alerts[:12]],
+        "recent_events": [
+            item.model_dump(mode="json")
+            for item in list_company_dispatch_events(db, current_user.company_id, limit=20)
+        ],
         "stale_vans": stale_vans,
         "insights": [item.model_dump(mode="json") for item in insights],
         "openai_model": settings.OPENAI_MODEL,

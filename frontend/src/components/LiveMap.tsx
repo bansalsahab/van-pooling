@@ -21,8 +21,10 @@ export function LiveMap({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const overlaysRef = useRef<Array<{ setMap?: (map: any) => void; map?: any }>>([]);
+  const viewportSignatureRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const [viewportVersion, setViewportVersion] = useState(0);
   const markerPayload = useMemo(() => markers, [markers]);
   const polylinePayload = useMemo(() => polylines, [polylines]);
 
@@ -52,6 +54,7 @@ export function LiveMap({
         zoomControl: true,
         streetViewControl: false,
         fullscreenControl: false,
+        gestureHandling: "greedy",
       });
       setIsReady(true);
       setError(null);
@@ -79,10 +82,16 @@ export function LiveMap({
     overlaysRef.current = [];
 
     if (markerPayload.length === 0 && polylinePayload.length === 0) {
+      viewportSignatureRef.current = null;
       return;
     }
 
     const bounds = new google.maps.LatLngBounds();
+    const nextViewportSignature = JSON.stringify({
+      markerIds: markerPayload.map((marker) => marker.id).sort(),
+      polylineIds: polylinePayload.map((polyline) => polyline.id).sort(),
+      viewportVersion,
+    });
 
     for (const marker of markerPayload) {
       const mapMarker = new google.maps.Marker({
@@ -124,10 +133,18 @@ export function LiveMap({
       }
     }
 
-    if (!bounds.isEmpty()) {
+    if (!bounds.isEmpty() && viewportSignatureRef.current !== nextViewportSignature) {
       mapRef.current.fitBounds(bounds, 48);
+      google.maps.event.addListenerOnce(mapRef.current, "idle", () => {
+        const maxZoom =
+          markerPayload.length <= 1 && polylinePayload.length === 0 ? 14 : 16;
+        if (typeof mapRef.current?.getZoom === "function" && mapRef.current.getZoom() > maxZoom) {
+          mapRef.current.setZoom(maxZoom);
+        }
+      });
+      viewportSignatureRef.current = nextViewportSignature;
     }
-  }, [isReady, markerPayload, polylinePayload]);
+  }, [isReady, markerPayload, polylinePayload, viewportVersion]);
 
   return (
     <section className="panel map-panel">
@@ -137,6 +154,15 @@ export function LiveMap({
           <h3>{title}</h3>
           <p>{subtitle}</p>
         </div>
+        {(markers.length > 0 || polylines.length > 0) && (
+          <button
+            className="ghost-button"
+            onClick={() => setViewportVersion((current) => current + 1)}
+            type="button"
+          >
+            Reset view
+          </button>
+        )}
       </div>
       {error ? (
         <div className="map-empty">{error}</div>

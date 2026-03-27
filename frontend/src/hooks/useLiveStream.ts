@@ -1,12 +1,33 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../lib/api";
-import type { LiveConnectionState, LiveSnapshot } from "../lib/types";
+import type {
+  LiveConnectionState,
+  LiveOperationalEvent,
+  LiveSnapshot,
+} from "../lib/types";
 
-type LiveEnvelope<TSnapshot> = {
+type SnapshotEnvelope<TSnapshot> = {
   event?: string;
   payload?: TSnapshot | { generated_at?: string };
 };
+
+type OperationalEventEnvelope = {
+  event?: LiveOperationalEvent["event"] | "heartbeat" | "snapshot.updated";
+  sequence?: number;
+  payload?: LiveOperationalEvent["payload"] | { generated_at?: string };
+};
+
+const OPERATIONAL_EVENTS: LiveOperationalEvent["event"][] = [
+  "ride.updated",
+  "trip.updated",
+  "van.updated",
+  "driver.updated",
+  "alert.created",
+  "alert.resolved",
+  "notification.created",
+  "notification.updated",
+];
 
 export function useLiveStream<TSnapshot extends LiveSnapshot>(token: string | null) {
   const [snapshot, setSnapshot] = useState<TSnapshot | null>(null);
@@ -14,10 +35,12 @@ export function useLiveStream<TSnapshot extends LiveSnapshot>(token: string | nu
     useState<LiveConnectionState>("connecting");
   const [streamError, setStreamError] = useState<string | null>(null);
   const [lastMessageAt, setLastMessageAt] = useState<string | null>(null);
+  const [recentEvents, setRecentEvents] = useState<LiveOperationalEvent[]>([]);
 
   useEffect(() => {
     if (!token) {
       setSnapshot(null);
+      setRecentEvents([]);
       setConnectionState("error");
       setStreamError("Sign in to start realtime updates.");
       return;
@@ -33,6 +56,11 @@ export function useLiveStream<TSnapshot extends LiveSnapshot>(token: string | nu
       setConnectionState("live");
       setStreamError(null);
       setLastMessageAt(new Date().toISOString());
+    };
+
+    const pushEvent = (event: LiveOperationalEvent) => {
+      setRecentEvents((current) => [event, ...current].slice(0, 18));
+      markLive();
     };
 
     const applySnapshot = (payload: TSnapshot) => {
@@ -64,6 +92,22 @@ export function useLiveStream<TSnapshot extends LiveSnapshot>(token: string | nu
       }
     };
 
+    const parseOperationalEvent = (
+      eventName: string,
+      rawPayload: string,
+      sequence?: number,
+    ) => {
+      if (!OPERATIONAL_EVENTS.includes(eventName as LiveOperationalEvent["event"])) {
+        return;
+      }
+      const payload = JSON.parse(rawPayload) as LiveOperationalEvent["payload"];
+      pushEvent({
+        event: eventName as LiveOperationalEvent["event"],
+        sequence,
+        payload,
+      });
+    };
+
     const connectSse = () => {
       if (closed || source) {
         return;
@@ -78,14 +122,24 @@ export function useLiveStream<TSnapshot extends LiveSnapshot>(token: string | nu
         setStreamError(null);
       };
 
-      source.addEventListener("snapshot", (event) => {
+      const handleSnapshotEvent = (event: Event) => {
         const message = event as MessageEvent<string>;
         applySnapshot(JSON.parse(message.data) as TSnapshot);
-      });
+      };
+
+      source.addEventListener("snapshot", handleSnapshotEvent);
+      source.addEventListener("snapshot.updated", handleSnapshotEvent);
 
       source.addEventListener("heartbeat", () => {
         applyHeartbeat();
       });
+
+      for (const eventName of OPERATIONAL_EVENTS) {
+        source.addEventListener(eventName, (event) => {
+          const message = event as MessageEvent<string>;
+          parseOperationalEvent(eventName, message.data);
+        });
+      }
 
       source.onerror = () => {
         setConnectionState((current) => (current === "live" ? "reconnecting" : "error"));
@@ -118,13 +172,27 @@ export function useLiveStream<TSnapshot extends LiveSnapshot>(token: string | nu
       };
 
       socket.onmessage = (event) => {
-        const envelope = JSON.parse(event.data) as LiveEnvelope<TSnapshot>;
+        const envelope = JSON.parse(event.data) as
+          | SnapshotEnvelope<TSnapshot>
+          | OperationalEventEnvelope;
         if (envelope.event === "snapshot.updated" && envelope.payload) {
           applySnapshot(envelope.payload as TSnapshot);
           return;
         }
         if (envelope.event === "heartbeat") {
           applyHeartbeat();
+          return;
+        }
+        if (envelope.event && envelope.payload) {
+          const sequence =
+            "sequence" in envelope && typeof envelope.sequence === "number"
+              ? envelope.sequence
+              : undefined;
+          pushEvent({
+            event: envelope.event as LiveOperationalEvent["event"],
+            sequence,
+            payload: envelope.payload as LiveOperationalEvent["payload"],
+          });
         }
       };
 
@@ -161,5 +229,6 @@ export function useLiveStream<TSnapshot extends LiveSnapshot>(token: string | nu
     connectionState,
     streamError,
     lastMessageAt,
+    recentEvents,
   };
 }

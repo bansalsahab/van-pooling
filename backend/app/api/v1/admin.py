@@ -9,6 +9,7 @@ from app.database import get_db
 from app.models.user import User, UserRole
 from app.schemas.admin_ops import OptionalReasonInput, TripReassignInput
 from app.schemas.alert import AlertSummary
+from app.schemas.dispatch_event import DispatchEventSummary
 from app.schemas.dashboard import AdminDashboardSummary
 from app.schemas.trip import TripSummary
 from app.schemas.user import AdminUserCreate, UserSummary
@@ -18,6 +19,7 @@ from app.services.admin_service import (
     create_company_van,
     list_company_drivers,
 )
+from app.services.audit_service import list_trip_dispatch_events
 from app.services.dispatch_ops_service import cancel_trip_by_admin, reassign_trip_van
 from app.services.dashboard_service import (
     get_admin_dashboard,
@@ -73,6 +75,22 @@ def trips(
 ) -> list[TripSummary]:
     """Return trips for the admin's company."""
     return list_company_trips(db, current_user.company_id)
+
+
+@router.get("/trips/{trip_id}/events", response_model=list[DispatchEventSummary])
+def trip_events(
+    trip_id: UUID,
+    limit: int = 40,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[DispatchEventSummary]:
+    """Return persisted dispatch history for a specific trip."""
+    return list_trip_dispatch_events(
+        db,
+        current_user.company_id,
+        trip_id,
+        limit=limit,
+    )
 
 
 @router.get("/alerts", response_model=list[AlertSummary])

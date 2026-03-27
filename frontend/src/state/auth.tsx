@@ -17,7 +17,11 @@ interface AuthContextValue {
   user: UserProfile | null;
   token: string | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (
+    email: string,
+    password: string,
+    requestedRole?: UserProfile["role"],
+  ) => Promise<void>;
   register: (payload: {
     name: string;
     email: string;
@@ -25,6 +29,7 @@ interface AuthContextValue {
     phone?: string;
     company_domain: string;
     company_name?: string;
+    requested_role?: UserProfile["role"];
   }) => Promise<void>;
   logout: () => void;
 }
@@ -81,8 +86,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(result.user);
   }
 
-  async function login(email: string, password: string) {
-    const result = await api.login(email, password);
+  async function login(
+    email: string,
+    password: string,
+    requestedRole?: UserProfile["role"],
+  ) {
+    const result = await api.login(email, password, requestedRole);
     await handleAuthResult(result);
   }
 
@@ -93,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     phone?: string;
     company_domain: string;
     company_name?: string;
+    requested_role?: UserProfile["role"];
   }) {
     const result = await api.register(payload);
     await handleAuthResult(result);

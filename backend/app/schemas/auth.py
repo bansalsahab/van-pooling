@@ -1,6 +1,7 @@
 """Authentication schemas."""
 from pydantic import BaseModel, EmailStr, Field
 
+from app.models.user import UserRole
 from app.schemas.user import UserProfile
 
 
@@ -9,6 +10,7 @@ class LoginRequest(BaseModel):
 
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
+    requested_role: UserRole | None = None
 
 
 class RegisterRequest(BaseModel):
@@ -20,6 +22,7 @@ class RegisterRequest(BaseModel):
     phone: str | None = Field(default=None, max_length=20)
     company_domain: str = Field(min_length=3, max_length=255)
     company_name: str | None = Field(default=None, max_length=255)
+    requested_role: UserRole | None = None
 
 
 class TokenResponse(BaseModel):

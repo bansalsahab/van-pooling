@@ -4,12 +4,15 @@ import type {
   AdminUserCreateInput,
   AdminVanCreateInput,
   AIInsight,
+  DispatchEventSummary,
   AuthResponse,
   CopilotBrief,
   CopilotReply,
   DriverDashboardSummary,
   DriverTripSummary,
   GeocodeResult,
+  NotificationFeed,
+  NotificationSummary,
   RideSummary,
   RoutePlan,
   RouteWaypoint,
@@ -121,10 +124,10 @@ export const api = {
     url.searchParams.set("access_token", token);
     return url.toString();
   },
-  login(email: string, password: string) {
+  login(email: string, password: string, requestedRole?: "employee" | "driver" | "admin") {
     return request<AuthResponse>("/auth/login", {
       method: "POST",
-      body: { email, password },
+      body: { email, password, requested_role: requestedRole },
     });
   },
   register(payload: {
@@ -134,6 +137,7 @@ export const api = {
     phone?: string;
     company_domain: string;
     company_name?: string;
+    requested_role?: "employee" | "driver" | "admin";
   }) {
     return request<AuthResponse>("/auth/register", {
       method: "POST",
@@ -243,8 +247,48 @@ export const api = {
   getAdminTrips(token: string) {
     return request<TripSummary[]>("/admin/trips", { token });
   },
+  getAdminTripEvents(token: string, tripId: string) {
+    return request<DispatchEventSummary[]>(`/admin/trips/${tripId}/events`, { token });
+  },
   getAdminAlerts(token: string) {
     return request<AlertSummary[]>("/admin/alerts", { token });
+  },
+  getNotifications(
+    token: string,
+    options?: { includeAlerts?: boolean; limit?: number },
+  ) {
+    const params = new URLSearchParams();
+    if (typeof options?.includeAlerts === "boolean") {
+      params.set("include_alerts", String(options.includeAlerts));
+    }
+    if (typeof options?.limit === "number") {
+      params.set("limit", String(options.limit));
+    }
+    const query = params.toString();
+    return request<NotificationFeed>(`/notifications${query ? `?${query}` : ""}`, { token });
+  },
+  readNotification(token: string, notificationId: string) {
+    return request<NotificationSummary>(`/notifications/${notificationId}/read`, {
+      method: "POST",
+      token,
+    });
+  },
+  readAllNotifications(
+    token: string,
+    options?: { includeAlerts?: boolean; limit?: number },
+  ) {
+    const params = new URLSearchParams();
+    if (typeof options?.includeAlerts === "boolean") {
+      params.set("include_alerts", String(options.includeAlerts));
+    }
+    if (typeof options?.limit === "number") {
+      params.set("limit", String(options.limit));
+    }
+    const query = params.toString();
+    return request<NotificationFeed>(`/notifications/read-all${query ? `?${query}` : ""}`, {
+      method: "POST",
+      token,
+    });
   },
   resolveAdminAlert(token: string, alertId: string) {
     return request<AlertSummary>(`/admin/alerts/${alertId}/resolve`, {

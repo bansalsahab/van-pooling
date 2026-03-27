@@ -21,6 +21,7 @@ from app.schemas.common import MessageResponse
 from app.schemas.dashboard import DriverDashboardSummary
 from app.schemas.trip import DriverTripSummary
 from app.schemas.van import DriverLocationUpdate, DriverStatusUpdate
+from app.services.audit_service import record_dispatch_event
 from app.services.dispatch_ops_service import mark_passenger_no_show
 from app.services.dashboard_service import get_driver_dashboard, serialize_driver_trip
 from app.services.lifecycle_service import TRIP_ACTIVE_STATUSES, close_trip, synchronize_trip_lifecycle
@@ -196,6 +197,7 @@ def start_trip(
 ) -> MessageResponse:
     """Mark a dispatch-ready trip as active toward pickups."""
     trip = _get_driver_trip_or_404(db, current_user, trip_id)
+    previous_trip_status = trip.status.value
     trip.started_at = trip.started_at or datetime.utcnow()
     trip.status = TripStatus.ACTIVE_TO_PICKUP
     if trip.van:
@@ -204,6 +206,16 @@ def start_trip(
 
     synchronize_trip_lifecycle(trip)
     rebuild_trip_route(db, trip)
+    record_dispatch_event(
+        db,
+        company_id=current_user.company_id,
+        event_type="trip.started",
+        actor_type=current_user.role.value,
+        actor_user_id=current_user.id,
+        trip_id=trip.id,
+        from_state=previous_trip_status,
+        to_state=trip.status.value,
+    )
     db.add(trip)
     db.commit()
     return MessageResponse(message="Trip started.")
@@ -230,6 +242,7 @@ def pickup_passenger(
             detail="Passenger assignment not found.",
         )
 
+    previous_ride_status = assignment.ride_request.status.value
     assignment.status = PassengerStatus.PICKED_UP
     assignment.actual_pickup_time = datetime.utcnow()
     assignment.ride_request.status = RideRequestStatus.PICKED_UP
@@ -237,6 +250,18 @@ def pickup_passenger(
 
     synchronize_trip_lifecycle(trip)
     rebuild_trip_route(db, trip)
+    record_dispatch_event(
+        db,
+        company_id=current_user.company_id,
+        event_type="ride.picked_up",
+        actor_type=current_user.role.value,
+        actor_user_id=current_user.id,
+        ride_id=assignment.ride_request_id,
+        trip_id=trip.id,
+        from_state=previous_ride_status,
+        to_state=assignment.ride_request.status.value,
+        metadata={"passenger_name": assignment.user.name if assignment.user else None},
+    )
     db.add_all([assignment, assignment.ride_request, trip])
     db.commit()
     return MessageResponse(message="Passenger marked as picked up.")
@@ -263,6 +288,7 @@ def dropoff_passenger(
             detail="Passenger assignment not found.",
         )
 
+    previous_ride_status = assignment.ride_request.status.value
     assignment.status = PassengerStatus.DROPPED_OFF
     assignment.actual_dropoff_time = datetime.utcnow()
     assignment.ride_request.status = RideRequestStatus.DROPPED_OFF
@@ -274,6 +300,18 @@ def dropoff_passenger(
 
     synchronize_trip_lifecycle(trip)
     rebuild_trip_route(db, trip)
+    record_dispatch_event(
+        db,
+        company_id=current_user.company_id,
+        event_type="ride.dropped_off",
+        actor_type=current_user.role.value,
+        actor_user_id=current_user.id,
+        ride_id=assignment.ride_request_id,
+        trip_id=trip.id,
+        from_state=previous_ride_status,
+        to_state=assignment.ride_request.status.value,
+        metadata={"passenger_name": assignment.user.name if assignment.user else None},
+    )
     db.add_all([assignment, assignment.ride_request, trip])
     db.commit()
     return MessageResponse(message="Passenger marked as dropped off.")
@@ -287,21 +325,61 @@ def complete_trip(
 ) -> MessageResponse:
     """Force-complete a trip and release the van."""
     trip = _get_driver_trip_or_404(db, current_user, trip_id)
+    previous_trip_status = trip.status.value
     completed_at = datetime.utcnow()
     for assignment in trip.trip_passengers:
         if assignment.ride_request is None:
             continue
+        previous_ride_status = assignment.ride_request.status.value
         if assignment.status != PassengerStatus.DROPPED_OFF:
             assignment.status = PassengerStatus.DROPPED_OFF
             assignment.actual_dropoff_time = completed_at
             assignment.ride_request.status = RideRequestStatus.DROPPED_OFF
             assignment.ride_request.actual_dropoff_time = completed_at
             db.add(assignment.ride_request)
+            record_dispatch_event(
+                db,
+                company_id=current_user.company_id,
+                event_type="ride.dropped_off",
+                actor_type=current_user.role.value,
+                actor_user_id=current_user.id,
+                ride_id=assignment.ride_request_id,
+                trip_id=trip.id,
+                from_state=previous_ride_status,
+                to_state=assignment.ride_request.status.value,
+                metadata={"forced": True},
+            )
         db.add(assignment)
 
     close_trip(trip)
     trip.completed_at = completed_at
     rebuild_trip_route(db, trip)
+    record_dispatch_event(
+        db,
+        company_id=current_user.company_id,
+        event_type="trip.completed",
+        actor_type=current_user.role.value,
+        actor_user_id=current_user.id,
+        trip_id=trip.id,
+        from_state=previous_trip_status,
+        to_state=trip.status.value,
+        metadata={"completed_at": completed_at.isoformat()},
+    )
+    for assignment in trip.trip_passengers:
+        if assignment.ride_request is None:
+            continue
+        record_dispatch_event(
+            db,
+            company_id=current_user.company_id,
+            event_type="ride.completed",
+            actor_type=current_user.role.value,
+            actor_user_id=current_user.id,
+            ride_id=assignment.ride_request_id,
+            trip_id=trip.id,
+            from_state=RideRequestStatus.DROPPED_OFF.value,
+            to_state=assignment.ride_request.status.value,
+            metadata={"completed_at": completed_at.isoformat()},
+        )
     db.add(trip)
     db.commit()
     return MessageResponse(message="Trip completed.")

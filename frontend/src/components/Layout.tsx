@@ -6,11 +6,25 @@ import { useAuth } from "../state/auth";
 interface LayoutProps {
   title: string;
   subtitle: string;
+  notificationUnreadCount?: number;
   children: ReactNode;
 }
 
-export function AppLayout({ title, subtitle, children }: LayoutProps) {
+function notificationRouteForRole(role?: string | null) {
+  if (role === "employee") return "/employee/notifications";
+  if (role === "driver") return "/driver/notifications";
+  if (role === "admin") return "/admin/notifications";
+  return "/";
+}
+
+export function AppLayout({
+  title,
+  subtitle,
+  notificationUnreadCount = 0,
+  children,
+}: LayoutProps) {
   const { user, logout } = useAuth();
+  const notificationRoute = notificationRouteForRole(user?.role);
 
   return (
     <div className="app-shell">
@@ -35,6 +49,10 @@ export function AppLayout({ title, subtitle, children }: LayoutProps) {
               >
                 Ride History
               </NavLink>
+              <NavLink className={({ isActive }) => (isActive ? "active" : "")} to={notificationRoute}>
+                Notifications
+                {notificationUnreadCount > 0 ? <span className="nav-dot" aria-label="New notifications" /> : null}
+              </NavLink>
             </>
           )}
           {user?.role === "driver" && (
@@ -47,6 +65,10 @@ export function AppLayout({ title, subtitle, children }: LayoutProps) {
                 to="/driver/operations"
               >
                 Trip Operations
+              </NavLink>
+              <NavLink className={({ isActive }) => (isActive ? "active" : "")} to={notificationRoute}>
+                Notifications
+                {notificationUnreadCount > 0 ? <span className="nav-dot" aria-label="New notifications" /> : null}
               </NavLink>
             </>
           )}
@@ -66,6 +88,10 @@ export function AppLayout({ title, subtitle, children }: LayoutProps) {
                 to="/admin/trips"
               >
                 Trips
+              </NavLink>
+              <NavLink className={({ isActive }) => (isActive ? "active" : "")} to={notificationRoute}>
+                Notifications
+                {notificationUnreadCount > 0 ? <span className="nav-dot" aria-label="New notifications" /> : null}
               </NavLink>
             </>
           )}

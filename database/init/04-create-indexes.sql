@@ -57,6 +57,17 @@ CREATE INDEX idx_notifications_status ON notifications(status);
 CREATE INDEX idx_notifications_type ON notifications(type);
 CREATE INDEX idx_notifications_created_at ON notifications(created_at);
 CREATE INDEX idx_notifications_user_status ON notifications(user_id, status);
+CREATE INDEX idx_notifications_user_read_at ON notifications(user_id, read_at);
+
+-- Dispatch events indexes
+CREATE INDEX idx_dispatch_events_company ON dispatch_events(company_id);
+CREATE INDEX idx_dispatch_events_trip ON dispatch_events(trip_id);
+CREATE INDEX idx_dispatch_events_ride ON dispatch_events(ride_id);
+CREATE INDEX idx_dispatch_events_actor_user ON dispatch_events(actor_user_id);
+CREATE INDEX idx_dispatch_events_event_type ON dispatch_events(event_type);
+CREATE INDEX idx_dispatch_events_created_at ON dispatch_events(created_at);
+CREATE INDEX idx_dispatch_events_company_created ON dispatch_events(company_id, created_at);
+CREATE INDEX idx_dispatch_events_trip_created ON dispatch_events(trip_id, created_at);
 
 -- Composite indexes for common queries
 CREATE INDEX idx_vans_company_status_location ON vans(company_id, status) INCLUDE (current_location);

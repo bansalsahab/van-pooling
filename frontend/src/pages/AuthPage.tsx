@@ -86,6 +86,12 @@ export function AuthPage() {
     }
   }, [user, navigate, location.pathname]);
 
+  useEffect(() => {
+    if (selectedRole === "driver" && mode === "register") {
+      setMode("login");
+    }
+  }, [mode, selectedRole]);
+
   const selectedRoleContent = ROLE_CONTENT[selectedRole];
 
   async function handleSubmit(event: React.FormEvent) {
@@ -94,7 +100,7 @@ export function AuthPage() {
     setError(null);
     try {
       if (mode === "login") {
-        await login(form.email, form.password);
+        await login(form.email, form.password, selectedRole);
       } else {
         await register({
           name: form.name,
@@ -102,7 +108,9 @@ export function AuthPage() {
           password: form.password,
           phone: form.phone || undefined,
           company_domain: form.company_domain,
-          company_name: form.company_name || undefined,
+          company_name:
+            selectedRole === "admin" ? form.company_name || undefined : undefined,
+          requested_role: selectedRole,
         });
       }
     } catch (submissionError) {
@@ -164,12 +172,27 @@ export function AuthPage() {
           </button>
           <button
             className={mode === "register" ? "active" : ""}
+            disabled={selectedRole === "driver"}
             onClick={() => setMode("register")}
             type="button"
           >
-            Register
+            {selectedRole === "driver" ? "Admin setup only" : "Register"}
           </button>
         </div>
+
+        {selectedRole === "driver" && (
+          <div className="helper-box">
+            Drivers are provisioned by admins. Use the driver card to sign in only with a driver
+            account.
+          </div>
+        )}
+
+        {selectedRole === "admin" && mode === "register" && (
+          <div className="helper-box">
+            Admin registration is only for bootstrapping a new company workspace. Existing company
+            admin accounts should be created from the admin console.
+          </div>
+        )}
 
         <form className="auth-form" onSubmit={handleSubmit}>
           {mode === "register" && (
@@ -230,7 +253,7 @@ export function AuthPage() {
               </label>
 
               <label>
-                Company domain
+                {selectedRole === "admin" ? "New company domain" : "Company domain"}
                 <input
                   value={form.company_domain}
                   onChange={(event) =>
@@ -244,19 +267,21 @@ export function AuthPage() {
                 />
               </label>
 
-              <label>
-                Company name for new tenant
-                <input
-                  value={form.company_name}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      company_name: event.target.value,
-                    }))
-                  }
-                  placeholder="Your company name"
-                />
-              </label>
+              {selectedRole === "admin" && (
+                <label>
+                  Company name for new tenant
+                  <input
+                    value={form.company_name}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        company_name: event.target.value,
+                      }))
+                    }
+                    placeholder="Your company name"
+                  />
+                </label>
+              )}
             </>
           )}
 

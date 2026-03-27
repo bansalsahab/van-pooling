@@ -14,6 +14,7 @@ from app.models.trip_passenger import PassengerStatus, TripPassenger
 from app.models.user import User
 from app.models.van import Van, VanStatus
 from app.schemas.trip import TripSummary
+from app.services.audit_service import record_dispatch_event
 from app.services.dashboard_service import serialize_trip_summary
 from app.services.lifecycle_service import ride_is_terminal, synchronize_trip_lifecycle
 from app.services.notification_service import create_admin_alert, queue_notification
@@ -119,6 +120,7 @@ def reassign_trip_van(
         )
 
     previous_van = trip.van
+    previous_trip_status = trip.status.value
     if previous_van is not None:
         previous_van.current_occupancy = max(
             0,
@@ -147,6 +149,24 @@ def reassign_trip_van(
     synchronize_trip_lifecycle(trip)
     rebuild_trip_route(db, trip)
     db.add(trip)
+    record_dispatch_event(
+        db,
+        company_id=admin_user.company_id,
+        event_type="trip.reassigned",
+        actor_type=admin_user.role.value,
+        actor_user_id=admin_user.id,
+        trip_id=trip.id,
+        from_state=previous_trip_status,
+        to_state=trip.status.value,
+        reason=reason,
+        metadata={
+            "previous_van_id": str(previous_van.id) if previous_van is not None else None,
+            "previous_van_license_plate": previous_van.license_plate if previous_van is not None else None,
+            "target_van_id": str(target_van.id),
+            "target_van_license_plate": target_van.license_plate,
+            "active_passengers": active_passengers,
+        },
+    )
 
     if target_van.driver_id is not None:
         queue_notification(
@@ -206,6 +226,7 @@ def cancel_trip_by_admin(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Trip is already closed.",
         )
+    previous_trip_status = trip.status.value
     if any(item.status == PassengerStatus.PICKED_UP for item in trip.trip_passengers):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -218,7 +239,20 @@ def cancel_trip_by_admin(
             continue
         if ride_is_terminal(assignment.ride_request.status):
             continue
+        previous_ride_status = assignment.ride_request.status.value
         assignment.ride_request.status = RideRequestStatus.CANCELLED_BY_ADMIN
+        record_dispatch_event(
+            db,
+            company_id=admin_user.company_id,
+            event_type="ride.cancelled_by_admin",
+            actor_type=admin_user.role.value,
+            actor_user_id=admin_user.id,
+            ride_id=assignment.ride_request_id,
+            trip_id=trip.id,
+            from_state=previous_ride_status,
+            to_state=assignment.ride_request.status.value,
+            reason=reason,
+        )
         queue_notification(
             db,
             assignment.user_id,
@@ -258,6 +292,18 @@ def cancel_trip_by_admin(
     trip.status = TripStatus.CANCELLED
     trip.completed_at = datetime.utcnow()
     db.add(trip)
+    record_dispatch_event(
+        db,
+        company_id=admin_user.company_id,
+        event_type="trip.cancelled",
+        actor_type=admin_user.role.value,
+        actor_user_id=admin_user.id,
+        trip_id=trip.id,
+        from_state=previous_trip_status,
+        to_state=trip.status.value,
+        reason=reason,
+        metadata={"active_passengers": active_passengers},
+    )
     create_admin_alert(
         db,
         admin_user.company_id,
@@ -317,6 +363,8 @@ def mark_passenger_no_show(
             detail="Only pending pickup passengers can be marked as no-show.",
         )
 
+    previous_ride_status = assignment.ride_request.status.value
+    previous_trip_status = trip.status.value
     assignment.status = PassengerStatus.NO_SHOW
     assignment.ride_request.status = RideRequestStatus.NO_SHOW
     db.add(assignment)
@@ -330,6 +378,18 @@ def mark_passenger_no_show(
             trip.van.status = VanStatus.AVAILABLE
         db.add(trip.van)
 
+    record_dispatch_event(
+        db,
+        company_id=driver_user.company_id,
+        event_type="ride.no_show",
+        actor_type=driver_user.role.value,
+        actor_user_id=driver_user.id,
+        ride_id=assignment.ride_request_id,
+        trip_id=trip.id,
+        from_state=previous_ride_status,
+        to_state=assignment.ride_request.status.value,
+        reason="Driver marked the rider as not present at pickup.",
+    )
     queue_notification(
         db,
         assignment.user_id,
@@ -345,6 +405,19 @@ def mark_passenger_no_show(
     rebuild_trip_route(db, trip)
     if trip.status == TripStatus.COMPLETED and trip.completed_at is None:
         trip.completed_at = datetime.utcnow()
+    if trip.status.value != previous_trip_status:
+        record_dispatch_event(
+            db,
+            company_id=driver_user.company_id,
+            event_type="trip.status_changed",
+            actor_type=driver_user.role.value,
+            actor_user_id=driver_user.id,
+            ride_id=assignment.ride_request_id,
+            trip_id=trip.id,
+            from_state=previous_trip_status,
+            to_state=trip.status.value,
+            reason="Trip lifecycle changed after a rider no-show.",
+        )
     db.add(trip)
 
     create_admin_alert(

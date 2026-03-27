@@ -7,6 +7,7 @@ from app.models.trip import Trip
 from app.models.trip_passenger import TripPassenger
 from app.models.analytics_event import AnalyticsEvent
 from app.models.notification import Notification
+from app.models.dispatch_event import DispatchEvent
 
 __all__ = [
     "Company",
@@ -17,4 +18,5 @@ __all__ = [
     "TripPassenger",
     "AnalyticsEvent",
     "Notification",
+    "DispatchEvent",
 ]
