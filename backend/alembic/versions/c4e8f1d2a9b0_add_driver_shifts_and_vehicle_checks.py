@@ -24,9 +24,9 @@ def upgrade() -> None:
     """Upgrade schema."""
     op.create_table(
         "driver_shifts",
-        sa.Column("id", UUIDType(), nullable=False),
-        sa.Column("company_id", UUIDType(), nullable=True),
-        sa.Column("driver_id", UUIDType(), nullable=True),
+        sa.Column("id", UUIDType, nullable=False),
+        sa.Column("company_id", UUIDType, nullable=True),
+        sa.Column("driver_id", UUIDType, nullable=True),
         sa.Column(
             "status",
             sa.Enum(
@@ -57,11 +57,11 @@ def upgrade() -> None:
 
     op.create_table(
         "vehicle_checks",
-        sa.Column("id", UUIDType(), nullable=False),
-        sa.Column("company_id", UUIDType(), nullable=True),
-        sa.Column("driver_id", UUIDType(), nullable=True),
-        sa.Column("van_id", UUIDType(), nullable=True),
-        sa.Column("shift_id", UUIDType(), nullable=True),
+        sa.Column("id", UUIDType, nullable=False),
+        sa.Column("company_id", UUIDType, nullable=True),
+        sa.Column("driver_id", UUIDType, nullable=True),
+        sa.Column("van_id", UUIDType, nullable=True),
+        sa.Column("shift_id", UUIDType, nullable=True),
         sa.Column(
             "status",
             sa.Enum("PASSED", "FAILED", name="vehicle_check_status"),

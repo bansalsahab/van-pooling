@@ -476,6 +476,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
           <div className="content-grid two-column">
             <LiveMap
               allowEmptyMap
+              useCurrentLocationOnEmpty
               height={420}
               mapUnavailableMessage={mapUnavailableMessage}
               title="Driver route board"

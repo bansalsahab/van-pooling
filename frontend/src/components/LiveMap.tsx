@@ -11,7 +11,8 @@ export function LiveMap({
   emptyMessage = "Map data will appear once live coordinates are available.",
   mapUnavailableMessage = null,
   height = 360,
-  allowEmptyMap = false,
+  allowEmptyMap = true,
+  useCurrentLocationOnEmpty = false,
 }: {
   title: string;
   subtitle: string;
@@ -21,6 +22,7 @@ export function LiveMap({
   mapUnavailableMessage?: string | null;
   height?: number;
   allowEmptyMap?: boolean;
+  useCurrentLocationOnEmpty?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -40,7 +42,20 @@ export function LiveMap({
         return;
       }
 
-      const google = await loadGoogleMapsApi();
+      let google: typeof window.google | null = null;
+      try {
+        google = await loadGoogleMapsApi();
+      } catch (loadError) {
+        if (cancelled) {
+          return;
+        }
+        const message =
+          loadError instanceof Error && loadError.message
+            ? loadError.message
+            : "Google Maps failed to load.";
+        setError(message);
+        return;
+      }
       if (cancelled) {
         return;
       }
@@ -63,7 +78,12 @@ export function LiveMap({
       setIsReady(true);
       setError(null);
 
-      if (markerPayload.length === 0 && allowEmptyMap && navigator.geolocation) {
+      if (
+        markerPayload.length === 0 &&
+        allowEmptyMap &&
+        useCurrentLocationOnEmpty &&
+        navigator.geolocation
+      ) {
         navigator.geolocation.getCurrentPosition(
           (position) => {
             if (!cancelled && mapRef.current) {
@@ -207,10 +227,11 @@ export function LiveMap({
           </button>
         )}
       </div>
+      {mapUnavailableMessage && !error && (
+        <div className="error-banner map-unavailable-banner">{mapUnavailableMessage}</div>
+      )}
       {error ? (
         <div className="map-empty"><div className="map-empty-content">{error}</div></div>
-      ) : mapUnavailableMessage ? (
-        <div className="map-empty"><div className="map-empty-content">{mapUnavailableMessage}</div></div>
       ) : markers.length === 0 && polylines.length === 0 && !allowEmptyMap ? (
         <div className="map-empty"><div className="map-empty-content">{emptyMessage}</div></div>
       ) : (

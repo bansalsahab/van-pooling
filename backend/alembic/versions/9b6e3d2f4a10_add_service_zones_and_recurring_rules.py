@@ -24,8 +24,8 @@ def upgrade() -> None:
     """Upgrade schema."""
     op.create_table(
         "service_zones",
-        sa.Column("id", UUIDType(), nullable=False),
-        sa.Column("company_id", UUIDType(), nullable=True),
+        sa.Column("id", UUIDType, nullable=False),
+        sa.Column("company_id", UUIDType, nullable=True),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column(
             "zone_type",
@@ -51,9 +51,9 @@ def upgrade() -> None:
 
     op.create_table(
         "recurring_ride_rules",
-        sa.Column("id", UUIDType(), nullable=False),
-        sa.Column("user_id", UUIDType(), nullable=True),
-        sa.Column("company_id", UUIDType(), nullable=True),
+        sa.Column("id", UUIDType, nullable=False),
+        sa.Column("user_id", UUIDType, nullable=True),
+        sa.Column("company_id", UUIDType, nullable=True),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column(
             "status",

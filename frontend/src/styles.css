@@ -774,6 +774,10 @@ input::placeholder {
   overflow: hidden;
 }
 
+.map-unavailable-banner {
+  margin-bottom: 0.85rem;
+}
+
 .map-canvas {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(6, 14, 26, 0.84);
