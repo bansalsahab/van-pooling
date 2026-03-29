@@ -129,6 +129,9 @@ cd backend
 - Monitor fleet, people, and trip flow from the operations UI
 - Create new employees, drivers, admins, and vans from the frontend
 - `GET /api/v1/admin/dashboard`
+- `GET /api/v1/admin/kpis?window=today|7d|30d`
+- `GET /api/v1/admin/sla`
+- `GET /api/v1/admin/incidents?include_resolved=true&limit=60`
 - `GET /api/v1/admin/vans`
 - `GET /api/v1/admin/employees`
 - `GET /api/v1/admin/drivers`
@@ -169,3 +172,5 @@ Sample demo data is available in `database/seeds/` and can be loaded with the se
 
 - [stages-roadmap.md](C:\Users\Parth bansal\Desktop\van-pooling-platform\stages-roadmap.md)
 - [agent-build-playbook.md](C:\Users\Parth bansal\Desktop\van-pooling-platform\agent-build-playbook.md)
+- [docs/icp.md](C:\Users\Parth bansal\Desktop\van-pooling-platform\docs\icp.md)
+- [docs/kpi-definitions.md](C:\Users\Parth bansal\Desktop\van-pooling-platform\docs\kpi-definitions.md)

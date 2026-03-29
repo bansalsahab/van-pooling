@@ -1,5 +1,6 @@
 import type {
   AIInsight,
+  LiveConnectionQuality,
   LiveConnectionState,
   LiveOperationalEvent,
   RideSummary,
@@ -118,9 +119,13 @@ export function RideTable({ rides }: { rides: RideSummary[] }) {
 export function LiveStatusBadge({
   state,
   lastUpdatedAt,
+  quality = "critical",
+  lagSeconds = null,
 }: {
   state: LiveConnectionState;
   lastUpdatedAt?: string | null;
+  quality?: LiveConnectionQuality;
+  lagSeconds?: number | null;
 }) {
   const label =
     state === "live"
@@ -135,6 +140,8 @@ export function LiveStatusBadge({
     <div className={`live-badge ${state}`}>
       <span className="live-dot" />
       <strong>{label}</strong>
+      <span className={`quality-pill ${quality}`}>{quality}</span>
+      {typeof lagSeconds === "number" && <span>{`${lagSeconds}s lag`}</span>}
       <span>{lastUpdatedAt ? `Updated ${formatTimestamp(lastUpdatedAt)}` : "Waiting"}</span>
     </div>
   );

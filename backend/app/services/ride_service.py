@@ -36,6 +36,13 @@ from app.services.lifecycle_service import (
     trip_is_blocking,
 )
 from app.services.notification_service import create_admin_alert, queue_notification
+from app.services.policy_service import (
+    describe_policy_violations,
+    evaluate_policy_for_ride_request,
+    get_company_policy,
+    resolve_user_is_women_rider,
+    resolve_user_team,
+)
 from app.services.routing_service import rebuild_trip_route
 
 
@@ -1053,6 +1060,25 @@ def create_ride_request(
     destination_point = _point(payload.destination.longitude, payload.destination.latitude)
     scheduled_time = _normalize_datetime(payload.scheduled_time)
     now = _utc_now()
+    company_policy = get_company_policy(db, current_user.company_id)
+    policy_violations = evaluate_policy_for_ride_request(
+        company_policy,
+        pickup_latitude=payload.pickup.latitude,
+        pickup_longitude=payload.pickup.longitude,
+        destination_latitude=payload.destination.latitude,
+        destination_longitude=payload.destination.longitude,
+        scheduled_time=scheduled_time,
+        reference_time=now,
+        role=current_user.role.value,
+        team=resolve_user_team(current_user),
+        is_women_rider=resolve_user_is_women_rider(current_user),
+    )
+    if policy_violations:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=describe_policy_violations(policy_violations),
+        )
+
     is_scheduled = scheduled_time is not None and scheduled_time > now
 
     available_vans = db.scalar(
@@ -1176,6 +1202,23 @@ def cancel_ride_request(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This ride can no longer be cancelled.",
+        )
+
+    company_policy = get_company_policy(db, current_user.company_id)
+    cancellation_cutoff_minutes = (
+        company_policy.cancellation.employee_cutoff_minutes_before_pickup
+    )
+    if (
+        cancellation_cutoff_minutes > 0
+        and ride.scheduled_time is not None
+        and _utc_now()
+        >= (ride.scheduled_time - timedelta(minutes=cancellation_cutoff_minutes))
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Cancellation window has closed for this scheduled ride according to company policy."
+            ),
         )
 
     assignment = ride.trip_passenger

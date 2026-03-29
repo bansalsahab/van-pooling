@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import type { UserProfile } from "../lib/types";
+import { api } from "../lib/api";
 import { useAuth } from "../state/auth";
 
 function defaultRoute(user: UserProfile) {
@@ -79,6 +80,15 @@ export function AuthPage() {
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [enterpriseDomain, setEnterpriseDomain] = useState("");
+  const [enterpriseBusy, setEnterpriseBusy] = useState(false);
+  const [enterpriseError, setEnterpriseError] = useState<string | null>(null);
+  const [enterpriseResult, setEnterpriseResult] = useState<{
+    configured: boolean;
+    guidance: string;
+    redirectUrl?: string | null;
+    companyName?: string;
+  } | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -121,6 +131,32 @@ export function AuthPage() {
       );
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleEnterpriseStart(event: React.FormEvent) {
+    event.preventDefault();
+    setEnterpriseBusy(true);
+    setEnterpriseError(null);
+    setEnterpriseResult(null);
+    try {
+      const response = await api.startEnterpriseSso({
+        company_domain: enterpriseDomain,
+        requested_role: selectedRole,
+        relay_state: `portal:${selectedRole}`,
+      });
+      setEnterpriseResult({
+        configured: response.configured,
+        guidance: response.guidance,
+        redirectUrl: response.redirect_url,
+        companyName: response.company_name,
+      });
+    } catch (ssoError) {
+      setEnterpriseError(
+        ssoError instanceof Error ? ssoError.message : "Could not start enterprise SSO.",
+      );
+    } finally {
+      setEnterpriseBusy(false);
     }
   }
 
@@ -193,6 +229,46 @@ export function AuthPage() {
             admin accounts should be created from the admin console.
           </div>
         )}
+
+        <section className="helper-box">
+          <p className="eyebrow">Enterprise SSO</p>
+          <p className="muted-copy">
+            Use your company domain to start SAML/OIDC sign-in when enterprise identity is enabled.
+          </p>
+          <form className="stack compact" onSubmit={handleEnterpriseStart}>
+            <label>
+              Company domain
+              <input
+                value={enterpriseDomain}
+                onChange={(event) => setEnterpriseDomain(event.target.value)}
+                placeholder="company.com"
+                required
+              />
+            </label>
+            <button className="secondary-button" disabled={enterpriseBusy} type="submit">
+              {enterpriseBusy ? "Checking..." : "Continue with enterprise SSO"}
+            </button>
+          </form>
+          {enterpriseError && <div className="error-banner">{enterpriseError}</div>}
+          {enterpriseResult && (
+            <div className="stack compact">
+              <p className="muted-copy">
+                {enterpriseResult.companyName ? `${enterpriseResult.companyName}: ` : ""}
+                {enterpriseResult.guidance}
+              </p>
+              {enterpriseResult.configured && enterpriseResult.redirectUrl && (
+                <a
+                  className="text-link"
+                  href={enterpriseResult.redirectUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  Open enterprise identity provider
+                </a>
+              )}
+            </div>
+          )}
+        </section>
 
         <form className="auth-form" onSubmit={handleSubmit}>
           {mode === "register" && (

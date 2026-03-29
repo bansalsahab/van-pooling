@@ -165,9 +165,9 @@ export function LiveMap({
         )}
       </div>
       {error ? (
-        <div className="map-empty">{error}</div>
+        <div className="map-empty"><div className="map-empty-content">{error}</div></div>
       ) : markers.length === 0 && polylines.length === 0 ? (
-        <div className="map-empty">{emptyMessage}</div>
+        <div className="map-empty"><div className="map-empty-content">{emptyMessage}</div></div>
       ) : (
         <div
           className="map-canvas"

@@ -1,4 +1,5 @@
 """Dashboard schemas."""
+import enum
 from datetime import datetime
 from uuid import UUID
 
@@ -20,6 +21,45 @@ class AdminDashboardSummary(BaseModel):
     pending_requests: int
     active_trips: int
     open_alerts: int
+
+
+class KPIWindow(str, enum.Enum):
+    """Supported admin KPI time windows."""
+
+    TODAY = "today"
+    SEVEN_DAYS = "7d"
+    THIRTY_DAYS = "30d"
+
+
+class AdminKPIValues(BaseModel):
+    """Core operational KPI values for the selected window."""
+
+    p95_wait_time_minutes: float | None = None
+    on_time_pickup_percent: float | None = None
+    seat_utilization_percent: float | None = None
+    deadhead_km_per_trip: float | None = None
+    dispatch_success_percent: float | None = None
+
+
+class AdminKPICounters(BaseModel):
+    """Denominator counters behind each KPI calculation."""
+
+    rides_considered: int = 0
+    scheduled_pickups_considered: int = 0
+    trips_considered: int = 0
+    dispatch_decisions_considered: int = 0
+
+
+class AdminKPISummary(BaseModel):
+    """Admin KPI snapshot response."""
+
+    company_id: UUID
+    window: KPIWindow
+    window_start: datetime
+    window_end: datetime
+    generated_at: datetime
+    metrics: AdminKPIValues
+    counters: AdminKPICounters
 
 
 class DriverScheduledWorkSummary(BaseModel):

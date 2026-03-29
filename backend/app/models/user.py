@@ -34,6 +34,7 @@ class User(Base):
         name: Full name
         phone: Phone number
         role: User role (employee/driver/admin)
+        admin_scope: Sub-role for enterprise admin permissions
         status: Account status
         home_location: Home location (PostGIS point)
         home_address: Home address text
@@ -59,6 +60,7 @@ class User(Base):
     
     # Enum fields
     role = Column(Enum(UserRole, name="user_role"), nullable=False, index=True)
+    admin_scope = Column(String(32), index=True)
     status = Column(
         Enum(UserStatus, name="user_status"),
         default=UserStatus.ACTIVE,

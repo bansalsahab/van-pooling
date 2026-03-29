@@ -49,8 +49,15 @@ interface PlaceSuggestion {
 
 export function EmployeeDashboard() {
   const { token, user } = useAuth();
-  const { snapshot, connectionState, lastMessageAt, streamError, recentEvents } =
-    useLiveStream<EmployeeLiveSnapshot>(token);
+  const {
+    snapshot,
+    connectionState,
+    connectionQuality,
+    lastMessageAt,
+    streamLagSeconds,
+    streamError,
+    recentEvents,
+  } = useLiveStream<EmployeeLiveSnapshot>(token);
   const { brief, reply, loading, asking, error: copilotError, refreshBrief, askCopilot } =
     useCopilot(token);
   const [fallbackActiveRide, setFallbackActiveRide] = useState<RideSummary | null>(null);
@@ -513,7 +520,12 @@ export function EmployeeDashboard() {
               <p className="eyebrow">Realtime Feed</p>
               <h3>Ride signal</h3>
             </div>
-            <LiveStatusBadge state={connectionState} lastUpdatedAt={lastMessageAt} />
+            <LiveStatusBadge
+              state={connectionState}
+              quality={connectionQuality}
+              lagSeconds={streamLagSeconds}
+              lastUpdatedAt={lastMessageAt}
+            />
           </div>
           <div className="stack compact">
             <InfoRow
@@ -914,7 +926,7 @@ export function EmployeeDashboard() {
 
 export function EmployeeHistoryPage() {
   const { token } = useAuth();
-  const { snapshot, connectionState, lastMessageAt } =
+  const { snapshot, connectionState, connectionQuality, lastMessageAt, streamLagSeconds } =
     useLiveStream<EmployeeLiveSnapshot>(token);
   const [rides, setRides] = useState<RideSummary[]>([]);
 
@@ -937,7 +949,12 @@ export function EmployeeHistoryPage() {
             <p className="eyebrow">Realtime Feed</p>
             <h3>History sync</h3>
           </div>
-          <LiveStatusBadge state={connectionState} lastUpdatedAt={lastMessageAt} />
+          <LiveStatusBadge
+            state={connectionState}
+            quality={connectionQuality}
+            lagSeconds={streamLagSeconds}
+            lastUpdatedAt={lastMessageAt}
+          />
         </div>
         <RideTable rides={history} />
       </section>

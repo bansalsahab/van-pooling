@@ -100,6 +100,12 @@ export function AppLayout({
                   <span className="nav-dot" aria-label="Pending requests" />
                 ) : null}
               </NavLink>
+              <NavLink
+                className={({ isActive }) => (isActive ? "active" : "")}
+                to="/admin/policy"
+              >
+                Policy
+              </NavLink>
               <NavLink className={({ isActive }) => (isActive ? "active" : "")} to={notificationRoute}>
                 Notifications
                 {notificationUnreadCount > 0 ? <span className="nav-dot" aria-label="New notifications" /> : null}
@@ -111,7 +117,10 @@ export function AppLayout({
         <div className="sidebar-footer">
           <div className="user-chip">
             <strong>{user?.name}</strong>
-            <span>{user?.role}</span>
+            <span>
+              {user?.role}
+              {user?.role === "admin" && user?.admin_scope ? ` · ${user.admin_scope}` : ""}
+            </span>
           </div>
           <button className="ghost-button" onClick={logout}>
             Sign out

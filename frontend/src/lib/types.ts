@@ -1,4 +1,5 @@
 export type UserRole = "employee" | "driver" | "admin";
+export type AdminScope = "supervisor" | "dispatcher" | "viewer" | "support";
 
 export interface UserProfile {
   id: string;
@@ -7,6 +8,8 @@ export interface UserProfile {
   email: string;
   phone?: string | null;
   role: UserRole;
+  admin_scope?: AdminScope | null;
+  admin_permissions?: string[];
   status: string;
   company_name?: string | null;
   home_address?: string | null;
@@ -227,6 +230,195 @@ export interface AdminDashboardSummary {
   open_alerts: number;
 }
 
+export interface EnterpriseSSOStartResponse {
+  company_name: string;
+  company_domain: string;
+  configured: boolean;
+  provider?: "oidc" | "saml" | null;
+  redirect_url?: string | null;
+  guidance: string;
+  relay_state?: string | null;
+}
+
+export interface EnterpriseSSOStartRequest {
+  company_domain: string;
+  requested_role?: UserRole;
+  relay_state?: string | null;
+}
+
+export interface EnterpriseSSOConfig {
+  enabled: boolean;
+  provider: "oidc" | "saml";
+  issuer_url?: string | null;
+  sso_login_url?: string | null;
+  sso_logout_url?: string | null;
+  client_id?: string | null;
+  audience?: string | null;
+  redirect_uri?: string | null;
+}
+
+export interface EnterpriseSCIMConfig {
+  enabled: boolean;
+  base_url?: string | null;
+  provisioning_mode: "manual" | "sync_hook";
+  bearer_token_hint?: string | null;
+}
+
+export interface EnterpriseIdentityConfig {
+  sso: EnterpriseSSOConfig;
+  scim: EnterpriseSCIMConfig;
+  updated_at?: string | null;
+  updated_by_user_id?: string | null;
+}
+
+export interface EnterpriseIdentityConfigUpdate {
+  sso: EnterpriseSSOConfig;
+  scim: EnterpriseSCIMConfig;
+  scim_bearer_token?: string | null;
+}
+
+export type AuditExportFormat = "json" | "csv";
+
+export interface AuditExportRecord {
+  source: string;
+  occurred_at?: string | null;
+  event_type: string;
+  actor_type?: string | null;
+  actor_user_id?: string | null;
+  ride_id?: string | null;
+  trip_id?: string | null;
+  status?: string | null;
+  severity?: string | null;
+  reason?: string | null;
+  details: Record<string, unknown>;
+}
+
+export interface AuditExportResponse {
+  company_id: string;
+  generated_at: string;
+  record_count: number;
+  signature: string;
+  signature_algorithm: string;
+  records: AuditExportRecord[];
+}
+
+export type KPIWindow = "today" | "7d" | "30d";
+
+export interface AdminKPIValues {
+  p95_wait_time_minutes?: number | null;
+  on_time_pickup_percent?: number | null;
+  seat_utilization_percent?: number | null;
+  deadhead_km_per_trip?: number | null;
+  dispatch_success_percent?: number | null;
+}
+
+export interface AdminKPICounters {
+  rides_considered: number;
+  scheduled_pickups_considered: number;
+  trips_considered: number;
+  dispatch_decisions_considered: number;
+}
+
+export interface AdminKPISummary {
+  company_id: string;
+  window: KPIWindow;
+  window_start: string;
+  window_end: string;
+  generated_at: string;
+  metrics: AdminKPIValues;
+  counters: AdminKPICounters;
+}
+
+export type ProfileDomain = "employee" | "driver" | "admin";
+
+export interface DomainProfileSummary {
+  domain: ProfileDomain;
+  sample_size: number;
+  request_count: number;
+  error_count: number;
+  slow_request_count: number;
+  error_rate_percent: number;
+  slow_request_rate_percent: number;
+  average_latency_ms?: number | null;
+  p50_latency_ms?: number | null;
+  p95_latency_ms?: number | null;
+  last_updated_at?: string | null;
+}
+
+export interface DomainProfilingSnapshot {
+  generated_at: string;
+  max_samples_per_domain: number;
+  slow_request_threshold_ms: number;
+  profiles: DomainProfileSummary[];
+}
+
+export interface PolicyZoneBounds {
+  min_latitude?: number | null;
+  max_latitude?: number | null;
+  min_longitude?: number | null;
+  max_longitude?: number | null;
+}
+
+export interface ServiceZonePolicy {
+  enabled: boolean;
+  pickup_bounds?: PolicyZoneBounds | null;
+  destination_bounds?: PolicyZoneBounds | null;
+}
+
+export interface SchedulePolicy {
+  min_lead_minutes: number;
+  max_days_ahead: number;
+  dispatch_cutoff_minutes_before_pickup: number;
+}
+
+export interface CancellationPolicy {
+  employee_cutoff_minutes_before_pickup: number;
+}
+
+export interface WomenSafetyWindowPolicy {
+  enabled: boolean;
+  start_local_time: string;
+  end_local_time: string;
+  timezone: string;
+  requires_scheduled_rides: boolean;
+  apply_to_all_riders: boolean;
+}
+
+export interface CommutePolicyConfig {
+  priority_by_user_role: Record<string, number>;
+  priority_by_team: Record<string, number>;
+  service_zone: ServiceZonePolicy;
+  schedule: SchedulePolicy;
+  cancellation: CancellationPolicy;
+  women_safety_window: WomenSafetyWindowPolicy;
+  updated_at?: string | null;
+  updated_by_user_id?: string | null;
+}
+
+export interface PolicyViolation {
+  code: string;
+  message: string;
+  field?: string | null;
+}
+
+export interface PolicySimulationRequest {
+  pickup_latitude: number;
+  pickup_longitude: number;
+  destination_latitude: number;
+  destination_longitude: number;
+  scheduled_time?: string | null;
+  role?: string;
+  team?: string | null;
+  is_women_rider?: boolean;
+}
+
+export interface PolicySimulationResponse {
+  allowed: boolean;
+  dispatch_priority: number;
+  violations: PolicyViolation[];
+  policy: CommutePolicyConfig;
+}
+
 export interface TripSummary {
   id: string;
   status: string;
@@ -256,6 +448,41 @@ export interface AlertSummary {
   resolved_at?: string | null;
 }
 
+export interface SLABreachSummary {
+  breach_type: string;
+  title: string;
+  severity: string;
+  count: number;
+  threshold_label: string;
+  note: string;
+  sample_entity_id?: string | null;
+  entity_type?: string | null;
+}
+
+export interface SLASnapshotSummary {
+  company_id: string;
+  generated_at: string;
+  open_breach_count: number;
+  health: "healthy" | "warning" | "critical" | string;
+  breaches: SLABreachSummary[];
+}
+
+export interface IncidentTimelineItem {
+  id: string;
+  title?: string | null;
+  message: string;
+  status: string;
+  severity: string;
+  kind: string;
+  breach_type?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  ride_id?: string | null;
+  trip_id?: string | null;
+  created_at?: string | null;
+  resolved_at?: string | null;
+}
+
 export interface NotificationSummary {
   id: string;
   type: string;
@@ -263,6 +490,7 @@ export interface NotificationSummary {
   message: string;
   status: string;
   kind?: string | null;
+  breach_type?: string | null;
   severity?: string | null;
   entity_type?: string | null;
   entity_id?: string | null;
@@ -300,6 +528,7 @@ export interface AdminUserCreateInput {
   password: string;
   phone?: string;
   role: UserRole;
+  admin_scope?: AdminScope;
 }
 
 export interface AdminVanCreateInput {
@@ -403,6 +632,8 @@ export type LiveConnectionState =
   | "live"
   | "reconnecting"
   | "error";
+
+export type LiveConnectionQuality = "good" | "degraded" | "critical";
 
 export type LiveEventName =
   | "snapshot.updated"

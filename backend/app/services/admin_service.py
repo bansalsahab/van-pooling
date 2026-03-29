@@ -3,6 +3,11 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.rbac import (
+    admin_scope_permissions_sorted,
+    admin_scope_value,
+    parse_admin_scope,
+)
 from app.core.security import get_password_hash
 from app.models.user import User, UserRole, UserStatus
 from app.models.van import Van, VanStatus
@@ -29,6 +34,8 @@ def list_company_drivers(db: Session, company_id) -> list[UserSummary]:
             email=driver.email,
             phone=driver.phone,
             role=driver.role.value,
+            admin_scope=None,
+            admin_permissions=[],
             status=driver.status.value,
         )
         for driver in drivers
@@ -56,6 +63,21 @@ def create_company_user(
             detail="Role must be one of: employee, driver, admin.",
         ) from exc
 
+    admin_scope: str | None = None
+    if role == UserRole.ADMIN:
+        try:
+            admin_scope = parse_admin_scope(payload.admin_scope).value
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="admin_scope must be one of: supervisor, dispatcher, viewer, support.",
+            ) from exc
+    elif payload.admin_scope is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="admin_scope can only be set when role is admin.",
+        )
+
     user = User(
         company_id=company_id,
         name=payload.name,
@@ -63,12 +85,17 @@ def create_company_user(
         password_hash=get_password_hash(payload.password),
         phone=payload.phone,
         role=role,
+        admin_scope=admin_scope,
         status=UserStatus.ACTIVE,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
 
+    summary_scope = admin_scope_value(user.admin_scope) if user.role == UserRole.ADMIN else None
+    summary_permissions = (
+        admin_scope_permissions_sorted(summary_scope) if summary_scope is not None else []
+    )
     return UserSummary(
         id=user.id,
         company_id=user.company_id,
@@ -76,6 +103,8 @@ def create_company_user(
         email=user.email,
         phone=user.phone,
         role=user.role.value,
+        admin_scope=summary_scope,
+        admin_permissions=summary_permissions,
         status=user.status.value,
     )
 

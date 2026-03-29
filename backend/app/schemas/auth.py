@@ -23,6 +23,7 @@ class RegisterRequest(BaseModel):
     company_domain: str = Field(min_length=3, max_length=255)
     company_name: str | None = Field(default=None, max_length=255)
     requested_role: UserRole | None = None
+    requested_admin_scope: str | None = Field(default=None, max_length=32)
 
 
 class TokenResponse(BaseModel):

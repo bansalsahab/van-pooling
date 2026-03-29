@@ -123,6 +123,14 @@ export default function App() {
         }
       />
       <Route
+        path="/admin/policy"
+        element={
+          <ProtectedRoute role="admin">
+            <AdminDashboard section="policy" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/admin/notifications"
         element={
           <ProtectedRoute role="admin">

@@ -1,8 +1,15 @@
 """Authentication service helpers."""
+from __future__ import annotations
+
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.rbac import (
+    admin_scope_permissions_sorted,
+    admin_scope_value,
+    parse_admin_scope,
+)
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -20,6 +27,11 @@ def serialize_user(user: User) -> UserProfile:
     """Convert a user model into a response-friendly profile."""
     home_coordinates = parse_point(user.home_location)
     destination_coordinates = parse_point(user.default_destination)
+    admin_scope = None
+    admin_permissions: list[str] = []
+    if user.role == UserRole.ADMIN:
+        admin_scope = admin_scope_value(user.admin_scope)
+        admin_permissions = admin_scope_permissions_sorted(admin_scope)
     return UserProfile(
         id=user.id,
         company_id=user.company_id,
@@ -27,6 +39,8 @@ def serialize_user(user: User) -> UserProfile:
         email=user.email,
         phone=user.phone,
         role=user.role.value,
+        admin_scope=admin_scope,
+        admin_permissions=admin_permissions,
         status=user.status.value,
         company_name=user.company.name if user.company else None,
         home_address=user.home_address,
@@ -77,6 +91,8 @@ def build_token_response(user: User) -> TokenResponse:
         "role": user.role.value,
         "company_id": str(user.company_id) if user.company_id else None,
     }
+    if user.role == UserRole.ADMIN:
+        claims["admin_scope"] = admin_scope_value(user.admin_scope)
     return TokenResponse(
         access_token=create_access_token(user.id, extra_claims=claims),
         refresh_token=create_refresh_token(user.id, extra_claims=claims),
@@ -128,6 +144,13 @@ def register_user(db: Session, payload: RegisterRequest) -> TokenResponse:
         db.add(company)
         db.flush()
         role = UserRole.ADMIN
+        try:
+            admin_scope = parse_admin_scope(payload.requested_admin_scope).value
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="requested_admin_scope must be one of: supervisor, dispatcher, viewer, support.",
+            ) from exc
     elif company is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -135,6 +158,7 @@ def register_user(db: Session, payload: RegisterRequest) -> TokenResponse:
         )
     else:
         role = UserRole.EMPLOYEE
+        admin_scope = None
 
     user = User(
         company_id=company.id,
@@ -143,6 +167,7 @@ def register_user(db: Session, payload: RegisterRequest) -> TokenResponse:
         name=payload.name,
         phone=payload.phone,
         role=role,
+        admin_scope=admin_scope,
         status=UserStatus.ACTIVE,
     )
     db.add(user)

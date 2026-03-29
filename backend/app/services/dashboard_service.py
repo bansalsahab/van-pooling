@@ -1,17 +1,22 @@
 """Dashboard and fleet service helpers."""
-from datetime import datetime
+import math
+from datetime import datetime, timedelta
 
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.geo import parse_point
+from app.geo import haversine_distance_meters, parse_point
 from app.models.ride_request import RideRequest, RideRequestStatus
 from app.models.trip import Trip, TripStatus
-from app.models.trip_passenger import TripPassenger
+from app.models.trip_passenger import PassengerStatus, TripPassenger
 from app.models.user import User, UserRole
 from app.models.van import Van, VanStatus
 from app.schemas.dashboard import (
     AdminDashboardSummary,
+    AdminKPICounters,
+    AdminKPISummary,
+    AdminKPIValues,
+    KPIWindow,
     DriverDashboardSummary,
     DriverScheduledWorkSummary,
 )
@@ -29,6 +34,239 @@ DRIVER_SCHEDULED_WORK_STATUSES = {
     RideRequestStatus.ARRIVED_AT_PICKUP,
 }
 ADMIN_DISPATCH_BOARD_STATUSES = RIDE_PENDING_MATCH_STATUSES | RIDE_PENDING_SCHEDULED_STATUSES
+KPI_SCHEDULED_PICKUP_GRACE_MINUTES = 5
+KPI_DISPATCH_PENDING_STATUSES = {
+    RideRequestStatus.REQUESTED,
+    RideRequestStatus.MATCHING,
+    RideRequestStatus.SCHEDULED_REQUESTED,
+    RideRequestStatus.SCHEDULED_QUEUED,
+    RideRequestStatus.MATCHING_AT_DISPATCH_WINDOW,
+}
+KPI_DISPATCH_SUCCESS_STATUSES = {
+    RideRequestStatus.MATCHED,
+    RideRequestStatus.DRIVER_EN_ROUTE,
+    RideRequestStatus.ARRIVED_AT_PICKUP,
+    RideRequestStatus.PICKED_UP,
+    RideRequestStatus.IN_TRANSIT,
+    RideRequestStatus.ARRIVED_AT_DESTINATION,
+    RideRequestStatus.DROPPED_OFF,
+    RideRequestStatus.COMPLETED,
+}
+
+
+def _window_start(window: KPIWindow, now: datetime) -> datetime:
+    if window == KPIWindow.TODAY:
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if window == KPIWindow.SEVEN_DAYS:
+        return now - timedelta(days=7)
+    return now - timedelta(days=30)
+
+
+def _round_metric(value: float | None, digits: int = 2) -> float | None:
+    if value is None:
+        return None
+    return round(value, digits)
+
+
+def _safe_percent(numerator: int | float, denominator: int | float) -> float | None:
+    if denominator <= 0:
+        return None
+    return _round_metric((float(numerator) / float(denominator)) * 100.0)
+
+
+def _percentile(values: list[float], percentile_ratio: float) -> float | None:
+    if not values:
+        return None
+    sorted_values = sorted(values)
+    if len(sorted_values) == 1:
+        return _round_metric(sorted_values[0])
+
+    rank = (len(sorted_values) - 1) * percentile_ratio
+    low = math.floor(rank)
+    high = math.ceil(rank)
+    if low == high:
+        return _round_metric(sorted_values[int(rank)])
+    low_value = sorted_values[low]
+    high_value = sorted_values[high]
+    interpolated = low_value + ((high_value - low_value) * (rank - low))
+    return _round_metric(interpolated)
+
+
+def _read_waypoint_coordinates(
+    payload: dict | None,
+) -> tuple[float, float] | None:
+    if not isinstance(payload, dict):
+        return None
+    latitude = payload.get("latitude")
+    longitude = payload.get("longitude")
+    if not isinstance(latitude, (int, float)) or not isinstance(longitude, (int, float)):
+        return None
+    return float(latitude), float(longitude)
+
+
+def _estimate_deadhead_km_from_route(route: dict | None) -> float | None:
+    if not isinstance(route, dict):
+        return None
+    origin = _read_waypoint_coordinates(route.get("origin"))
+    if origin is None:
+        return None
+
+    first_pickup: tuple[float, float] | None = None
+    waypoints = route.get("waypoints")
+    if isinstance(waypoints, list):
+        for item in waypoints:
+            if not isinstance(item, dict):
+                continue
+            if item.get("kind") != "pickup":
+                continue
+            first_pickup = _read_waypoint_coordinates(item)
+            if first_pickup is not None:
+                break
+
+    if first_pickup is None:
+        pickup_sequence = route.get("pickup_sequence")
+        if isinstance(pickup_sequence, list):
+            for item in pickup_sequence:
+                if not isinstance(item, dict):
+                    continue
+                latitude = item.get("pickup_latitude")
+                longitude = item.get("pickup_longitude")
+                if isinstance(latitude, (int, float)) and isinstance(longitude, (int, float)):
+                    first_pickup = (float(latitude), float(longitude))
+                    break
+
+    if first_pickup is None:
+        return None
+    meters = haversine_distance_meters(
+        origin[0],
+        origin[1],
+        first_pickup[0],
+        first_pickup[1],
+    )
+    if meters < 0:
+        return None
+    return _round_metric(meters / 1000.0, digits=3)
+
+
+def get_admin_kpis(
+    db: Session,
+    company_id,
+    window: KPIWindow = KPIWindow.TODAY,
+) -> AdminKPISummary:
+    """Return Stage-0 baseline KPI snapshot for the admin company."""
+    now = datetime.utcnow()
+    window_start = _window_start(window, now)
+
+    rides = db.scalars(
+        select(RideRequest).where(
+            RideRequest.company_id == company_id,
+            RideRequest.requested_at.is_not(None),
+            RideRequest.requested_at >= window_start,
+            RideRequest.requested_at <= now,
+        )
+    ).all()
+
+    wait_time_samples: list[float] = []
+    scheduled_pickups_considered = 0
+    scheduled_pickups_on_time = 0
+    dispatch_decisions_considered = 0
+    dispatch_successes = 0
+
+    for ride in rides:
+        if ride.actual_pickup_time is not None and ride.requested_at is not None:
+            wait_minutes = (ride.actual_pickup_time - ride.requested_at).total_seconds() / 60.0
+            if wait_minutes >= 0:
+                wait_time_samples.append(wait_minutes)
+
+        if ride.scheduled_time is not None and ride.actual_pickup_time is not None:
+            scheduled_pickups_considered += 1
+            if ride.actual_pickup_time <= (
+                ride.scheduled_time
+                + timedelta(minutes=KPI_SCHEDULED_PICKUP_GRACE_MINUTES)
+            ):
+                scheduled_pickups_on_time += 1
+
+        if (
+            ride.status in KPI_DISPATCH_PENDING_STATUSES
+            or ride.status == RideRequestStatus.CANCELLED_BY_EMPLOYEE
+        ):
+            continue
+        dispatch_decisions_considered += 1
+        if ride.status in KPI_DISPATCH_SUCCESS_STATUSES:
+            dispatch_successes += 1
+
+    completed_trips = db.scalars(
+        select(Trip)
+        .where(
+            Trip.company_id == company_id,
+            Trip.completed_at.is_not(None),
+            Trip.completed_at >= window_start,
+            Trip.completed_at <= now,
+        )
+        .order_by(Trip.completed_at.desc())
+    ).all()
+
+    seats_used = 0
+    seats_capacity = 0
+    deadhead_samples_km: list[float] = []
+
+    for trip in completed_trips:
+        if trip.van is not None and trip.van.capacity > 0:
+            seats_capacity += trip.van.capacity
+            assigned_passengers = sum(
+                1
+                for assignment in trip.trip_passengers
+                if assignment.status != PassengerStatus.NO_SHOW
+            )
+            seats_used += min(assigned_passengers, trip.van.capacity)
+
+    trips_for_deadhead = db.scalars(
+        select(Trip)
+        .where(
+            Trip.company_id == company_id,
+            Trip.created_at.is_not(None),
+            Trip.created_at >= window_start,
+            Trip.created_at <= now,
+        )
+        .order_by(Trip.created_at.desc())
+    ).all()
+    for trip in trips_for_deadhead:
+        deadhead_km = _estimate_deadhead_km_from_route(trip.route)
+        if deadhead_km is not None:
+            deadhead_samples_km.append(deadhead_km)
+
+    deadhead_average_km = (
+        _round_metric(sum(deadhead_samples_km) / len(deadhead_samples_km))
+        if deadhead_samples_km
+        else None
+    )
+
+    return AdminKPISummary(
+        company_id=company_id,
+        window=window,
+        window_start=window_start,
+        window_end=now,
+        generated_at=now,
+        metrics=AdminKPIValues(
+            p95_wait_time_minutes=_percentile(wait_time_samples, 0.95),
+            on_time_pickup_percent=_safe_percent(
+                scheduled_pickups_on_time,
+                scheduled_pickups_considered,
+            ),
+            seat_utilization_percent=_safe_percent(seats_used, seats_capacity),
+            deadhead_km_per_trip=deadhead_average_km,
+            dispatch_success_percent=_safe_percent(
+                dispatch_successes,
+                dispatch_decisions_considered,
+            ),
+        ),
+        counters=AdminKPICounters(
+            rides_considered=len(rides),
+            scheduled_pickups_considered=scheduled_pickups_considered,
+            trips_considered=len(completed_trips),
+            dispatch_decisions_considered=dispatch_decisions_considered,
+        ),
+    )
 
 
 def serialize_van_summary(van: Van, driver_name: str | None = None) -> VanSummary:

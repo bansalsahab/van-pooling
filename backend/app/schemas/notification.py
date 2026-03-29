@@ -14,6 +14,7 @@ class NotificationSummary(BaseModel):
     message: str
     status: str
     kind: str | None = None
+    breach_type: str | None = None
     severity: str | None = None
     entity_type: str | None = None
     entity_id: str | None = None

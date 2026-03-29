@@ -32,11 +32,29 @@ import { useAuth } from "../state/auth";
 
 type SharingMode = "off" | "gps" | "simulated";
 
+const DRIVER_LOCATION_QUEUE_STORAGE_KEY = "vanpool.driver.location_queue.v1";
+const DRIVER_LOCATION_QUEUE_MAX_ITEMS = 120;
+const LOCATION_QUEUE_RETRY_INTERVAL_MS = 8000;
+
+interface DriverLocationQueueItem {
+  id: string;
+  latitude: number;
+  longitude: number;
+  created_at: string;
+}
+
 export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: boolean }) {
   const navigate = useNavigate();
   const { token, user } = useAuth();
-  const { snapshot, connectionState, lastMessageAt, streamError, recentEvents } =
-    useLiveStream<DriverLiveSnapshot>(token);
+  const {
+    snapshot,
+    connectionState,
+    connectionQuality,
+    lastMessageAt,
+    streamLagSeconds,
+    streamError,
+    recentEvents,
+  } = useLiveStream<DriverLiveSnapshot>(token);
   const { brief, reply, loading, asking, error: copilotError, refreshBrief, askCopilot } =
     useCopilot(token);
   const [fallbackDashboard, setFallbackDashboard] =
@@ -47,12 +65,48 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
   const [shareError, setShareError] = useState<string | null>(null);
   const [sharingMode, setSharingMode] = useState<SharingMode>("off");
   const [lastLocationSync, setLastLocationSync] = useState<string | null>(null);
+  const [lastQueueFlushAt, setLastQueueFlushAt] = useState<string | null>(null);
+  const [queueSyncing, setQueueSyncing] = useState(false);
+  const [locationQueue, setLocationQueue] = useState<DriverLocationQueueItem[]>(
+    () => loadDriverLocationQueue(),
+  );
   const [location, setLocation] = useState({ latitude: "", longitude: "" });
   const lastSentAtRef = useRef(0);
+  const queueSyncInFlightRef = useRef(false);
+  const locationQueueRef = useRef<DriverLocationQueueItem[]>(locationQueue);
 
   useEffect(() => {
     if (!token) return;
     void refresh();
+  }, [token]);
+
+  useEffect(() => {
+    locationQueueRef.current = locationQueue;
+    persistDriverLocationQueue(locationQueue);
+  }, [locationQueue]);
+
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+
+    const handleOnline = () => {
+      setStatusMessage("Connectivity restored. Syncing queued location updates.");
+      setShareError(null);
+      void flushLocationQueue({ showError: false });
+    };
+
+    window.addEventListener("online", handleOnline);
+    const intervalId = window.setInterval(() => {
+      void flushLocationQueue({ showError: false });
+    }, LOCATION_QUEUE_RETRY_INTERVAL_MS);
+
+    void flushLocationQueue({ showError: false });
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("online", handleOnline);
+    };
   }, [token]);
 
   const dashboard = snapshot?.data.dashboard ?? fallbackDashboard;
@@ -64,6 +118,8 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
   const tripAccepted = Boolean(trip?.accepted_at);
   const tripStarted = Boolean(trip?.started_at);
   const upcomingScheduledWork = dashboard?.upcoming_scheduled_work ?? [];
+  const isBrowserOnline =
+    typeof navigator === "undefined" ? true : navigator.onLine;
 
   useEffect(() => {
     if (
@@ -179,22 +235,124 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
     await Promise.all([refresh(), refreshBrief()]);
   }
 
+  function enqueueLocationUpdate(latitude: number, longitude: number) {
+    const update: DriverLocationQueueItem = {
+      id: buildQueueId(),
+      latitude,
+      longitude,
+      created_at: new Date().toISOString(),
+    };
+    const nextQueue = trimLocationQueue(
+      [...locationQueueRef.current, update],
+      DRIVER_LOCATION_QUEUE_MAX_ITEMS,
+    );
+    locationQueueRef.current = nextQueue;
+    setLocationQueue(nextQueue);
+    return nextQueue.length;
+  }
+
+  async function flushLocationQueue({
+    showError = true,
+  }: {
+    showError?: boolean;
+  } = {}) {
+    if (!token || queueSyncInFlightRef.current) {
+      return {
+        sentCount: 0,
+        pendingCount: locationQueueRef.current.length,
+        errorMessage: null as string | null,
+      };
+    }
+    if (
+      typeof navigator !== "undefined" &&
+      !navigator.onLine
+    ) {
+      return {
+        sentCount: 0,
+        pendingCount: locationQueueRef.current.length,
+        errorMessage: null as string | null,
+      };
+    }
+
+    const queued = locationQueueRef.current;
+    if (queued.length === 0) {
+      return { sentCount: 0, pendingCount: 0, errorMessage: null as string | null };
+    }
+
+    queueSyncInFlightRef.current = true;
+    setQueueSyncing(true);
+    let sentCount = 0;
+    let errorMessage: string | null = null;
+    const flushedIds = new Set<string>();
+
+    try {
+      for (const update of queued) {
+        try {
+          await api.updateDriverLocation(token, update.latitude, update.longitude);
+          flushedIds.add(update.id);
+          sentCount += 1;
+          setLastLocationSync(new Date().toISOString());
+        } catch (syncError) {
+          errorMessage =
+            syncError instanceof Error
+              ? syncError.message
+              : "Could not sync queued location update.";
+          break;
+        }
+      }
+
+      if (flushedIds.size > 0) {
+        const nextQueue = locationQueueRef.current.filter((item) => !flushedIds.has(item.id));
+        locationQueueRef.current = nextQueue;
+        setLocationQueue(nextQueue);
+        setLastQueueFlushAt(new Date().toISOString());
+        await refresh();
+      }
+
+      if (errorMessage && showError) {
+        setShareError(`Queued updates are waiting to sync. ${errorMessage}`);
+      }
+
+      return {
+        sentCount,
+        pendingCount: locationQueueRef.current.length,
+        errorMessage,
+      };
+    } finally {
+      queueSyncInFlightRef.current = false;
+      setQueueSyncing(false);
+    }
+  }
+
   async function syncLocation(
     latitude: number,
     longitude: number,
     successMessage = "Driver location updated.",
   ) {
     if (!token) return;
-    try {
-      await api.updateDriverLocation(token, latitude, longitude);
-      setLastLocationSync(new Date().toISOString());
-      setStatusMessage(successMessage);
-      setShareError(null);
-      await refresh();
-    } catch (locationError) {
-      setShareError(
-        locationError instanceof Error ? locationError.message : "Could not update location.",
+
+    const queuedCount = enqueueLocationUpdate(latitude, longitude);
+    setShareError(null);
+
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setStatusMessage(`Offline detected. Queued ${queuedCount} location update(s) for retry.`);
+      return;
+    }
+
+    const flushResult = await flushLocationQueue();
+    if (flushResult.sentCount > 0) {
+      setStatusMessage(
+        flushResult.pendingCount > 0
+          ? `${successMessage} ${flushResult.pendingCount} update(s) still queued.`
+          : successMessage,
       );
+      setShareError(null);
+      return;
+    }
+
+    if (flushResult.errorMessage) {
+      setStatusMessage("Location update queued. Retry will continue in the background.");
+      return;
     }
   }
 
@@ -229,7 +387,12 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
             />
             <section className="metric-panel">
               <span>Realtime Feed</span>
-              <LiveStatusBadge state={connectionState} lastUpdatedAt={lastMessageAt} />
+              <LiveStatusBadge
+                state={connectionState}
+                quality={connectionQuality}
+                lagSeconds={streamLagSeconds}
+                lastUpdatedAt={lastMessageAt}
+              />
               <p>{streamError || "Trip and van updates are streaming live."}</p>
             </section>
           </div>
@@ -368,13 +531,37 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
               >
                 Stop sharing
               </button>
+              <button
+                className="ghost-button"
+                disabled={locationQueue.length === 0 || queueSyncing}
+                onClick={() => void flushLocationQueue()}
+                type="button"
+              >
+                {queueSyncing
+                  ? "Syncing queued updates..."
+                  : locationQueue.length > 0
+                    ? `Retry queued sync (${locationQueue.length})`
+                    : "Queue clear"}
+              </button>
             </div>
 
             <div className="stack compact">
               <InfoRow label="Sharing mode" value={sharingMode} />
               <InfoRow
+                label="Connection"
+                value={isBrowserOnline ? "online" : "offline (queueing updates)"}
+              />
+              <InfoRow
                 label="Last location sync"
                 value={lastLocationSync ? formatTimestamp(lastLocationSync) : "No sync yet"}
+              />
+              <InfoRow
+                label="Queue backlog"
+                value={`${locationQueue.length} pending update(s)`}
+              />
+              <InfoRow
+                label="Last queue flush"
+                value={lastQueueFlushAt ? formatTimestamp(lastQueueFlushAt) : "No flush yet"}
               />
               <InfoRow
                 label="Vehicle ping"
@@ -921,4 +1108,65 @@ function formatScheduledCountdown(
     return `Dispatch starts in ${minutesUntilDispatchWindow} min`;
   }
   return "Dispatch timing in progress";
+}
+
+function loadDriverLocationQueue(): DriverLocationQueueItem[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(DRIVER_LOCATION_QUEUE_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    const sanitized = parsed.filter(isDriverLocationQueueItem);
+    return trimLocationQueue(sanitized, DRIVER_LOCATION_QUEUE_MAX_ITEMS);
+  } catch {
+    return [];
+  }
+}
+
+function persistDriverLocationQueue(queue: DriverLocationQueueItem[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      DRIVER_LOCATION_QUEUE_STORAGE_KEY,
+      JSON.stringify(trimLocationQueue(queue, DRIVER_LOCATION_QUEUE_MAX_ITEMS)),
+    );
+  } catch {
+    // Ignore local storage write failures to avoid blocking dispatch operations.
+  }
+}
+
+function trimLocationQueue(queue: DriverLocationQueueItem[], maxItems: number) {
+  if (queue.length <= maxItems) {
+    return queue;
+  }
+  return queue.slice(queue.length - maxItems);
+}
+
+function isDriverLocationQueueItem(value: unknown): value is DriverLocationQueueItem {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.latitude === "number" &&
+    typeof candidate.longitude === "number" &&
+    typeof candidate.created_at === "string"
+  );
+}
+
+function buildQueueId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `queue-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 }

@@ -22,6 +22,10 @@ from app.geo import point_value
 from app.models.company import Company
 from app.models.user import User, UserRole, UserStatus
 from app.models.van import Van, VanStatus
+from app.services.domain_profile_service import (
+    register_domain_profiling_middleware,
+    reset_domain_profiles,
+)
 
 
 TEST_PASSWORD = "password123"
@@ -166,7 +170,9 @@ def seeded_data(db_session_factory):
 @pytest.fixture()
 def client(db_session_factory, seeded_data):
     """Create a test client with an overridden DB session dependency."""
+    reset_domain_profiles()
     app = FastAPI()
+    register_domain_profiling_middleware(app)
     app.include_router(api_router, prefix=settings.API_V1_STR)
 
     def override_get_db():

@@ -195,6 +195,7 @@ def serialize_notification(notification: Notification) -> NotificationSummary:
         message=notification.message,
         status=notification.status.value,
         kind=_string_or_none(metadata.get("kind")),
+        breach_type=_string_or_none(metadata.get("breach_type")),
         severity=_string_or_none(metadata.get("severity")),
         entity_type=_string_or_none(metadata.get("entity_type")),
         entity_id=_string_or_none(metadata.get("entity_id")),

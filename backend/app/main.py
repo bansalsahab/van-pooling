@@ -10,15 +10,23 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.database import check_database_connection, init_db
 from app.services.dispatch_worker import dispatch_worker_loop, run_startup_recovery
+from app.services.domain_profile_service import register_domain_profiling_middleware
 from app.services.migration_service import upgrade_database_schema
 from app.services.notification_service import ensure_notification_schema
-from app.services.runtime_schema_service import ensure_ride_request_schema, ensure_trip_schema
+from app.services.runtime_schema_service import (
+    ensure_company_schema,
+    ensure_ride_request_schema,
+    ensure_trip_schema,
+    ensure_user_schema,
+)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description=settings.DESCRIPTION,
 )
+
+register_domain_profiling_middleware(app)
 
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
@@ -41,7 +49,10 @@ async def startup() -> None:
         init_db()
         ensure_trip_schema()
         ensure_ride_request_schema()
+        ensure_user_schema()
         ensure_notification_schema()
+    ensure_company_schema()
+    ensure_user_schema()
     run_startup_recovery()
     app.state.dispatch_stop_event = asyncio.Event()
     app.state.dispatch_task = asyncio.create_task(

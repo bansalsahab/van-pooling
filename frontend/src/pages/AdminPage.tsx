@@ -17,32 +17,66 @@ import { api } from "../lib/api";
 import type {
   AlertSummary,
   AdminDashboardSummary,
+  AdminKPISummary,
   AdminLiveSnapshot,
   AdminPendingRideSummary,
   AIInsight,
+  CommutePolicyConfig,
   DispatchDecisionMetadata,
   DispatchEventSummary,
+  DomainProfilingSnapshot,
+  IncidentTimelineItem,
+  KPIWindow,
   MapMarkerSpec,
   MapPolylineSpec,
+  SLASnapshotSummary,
   TripSummary,
   UserProfile,
   VanSummary,
+  PolicySimulationResponse,
 } from "../lib/types";
 import { useAuth } from "../state/auth";
+
+const DEFAULT_ADMIN_PERMISSIONS = [
+  "dashboard:read",
+  "fleet:read",
+  "dispatch:write",
+  "alerts:manage",
+  "policy:manage",
+  "users:manage",
+  "vans:manage",
+  "audit:export",
+  "incident:read",
+  "sso:manage",
+];
 
 export function AdminDashboard({
   section = "overview",
 }: {
-  section?: "overview" | "fleet" | "trips" | "requests";
+  section?: "overview" | "fleet" | "trips" | "requests" | "policy";
 }) {
   const navigate = useNavigate();
   const { token, user } = useAuth();
-  const { snapshot, connectionState, lastMessageAt, streamError, recentEvents } =
-    useLiveStream<AdminLiveSnapshot>(token);
+  const {
+    snapshot,
+    connectionState,
+    connectionQuality,
+    lastMessageAt,
+    streamLagSeconds,
+    streamError,
+    recentEvents,
+  } = useLiveStream<AdminLiveSnapshot>(token);
   const { brief, reply, loading, asking, error: copilotError, refreshBrief, askCopilot } =
     useCopilot(token);
   const [fallbackDashboard, setFallbackDashboard] =
     useState<AdminDashboardSummary | null>(null);
+  const [fallbackKpis, setFallbackKpis] = useState<AdminKPISummary | null>(null);
+  const [fallbackSla, setFallbackSla] = useState<SLASnapshotSummary | null>(null);
+  const [fallbackProfiling, setFallbackProfiling] =
+    useState<DomainProfilingSnapshot | null>(null);
+  const [fallbackIncidents, setFallbackIncidents] = useState<IncidentTimelineItem[]>([]);
+  const [kpiWindow, setKpiWindow] = useState<KPIWindow>("today");
+  const [kpiLoading, setKpiLoading] = useState(false);
   const [fallbackVans, setFallbackVans] = useState<VanSummary[]>([]);
   const [fallbackEmployees, setFallbackEmployees] = useState<UserProfile[]>([]);
   const [fallbackDrivers, setFallbackDrivers] = useState<UserProfile[]>([]);
@@ -64,6 +98,7 @@ export function AdminDashboard({
     password: "",
     phone: "",
     role: "employee",
+    admin_scope: "supervisor",
   });
   const [vanForm, setVanForm] = useState({
     license_plate: "",
@@ -71,13 +106,34 @@ export function AdminDashboard({
     driver_id: "",
     status: "offline",
   });
+  const [fallbackPolicy, setFallbackPolicy] = useState<CommutePolicyConfig | null>(null);
+  const [policyDraft, setPolicyDraft] = useState("");
+  const [policySaving, setPolicySaving] = useState(false);
+  const [policySimulation, setPolicySimulation] = useState({
+    pickup_latitude: "12.9716",
+    pickup_longitude: "77.5946",
+    destination_latitude: "12.9800",
+    destination_longitude: "77.6000",
+    scheduled_time: "",
+    role: "employee",
+    team: "",
+    is_women_rider: false,
+  });
+  const [policySimulationResult, setPolicySimulationResult] =
+    useState<PolicySimulationResponse | null>(null);
+  const [auditExporting, setAuditExporting] = useState(false);
 
   useEffect(() => {
     if (!token) return;
     void refresh();
-  }, [token]);
+  }, [token, kpiWindow]);
 
   const dashboard = snapshot?.data.dashboard ?? fallbackDashboard;
+  const kpis = fallbackKpis;
+  const profiling = fallbackProfiling;
+  const sla = fallbackSla;
+  const incidents = fallbackIncidents;
+  const policy = fallbackPolicy;
   const vans = snapshot?.data.vans ?? fallbackVans;
   const employees = snapshot?.data.employees ?? fallbackEmployees;
   const drivers = snapshot?.data.drivers ?? fallbackDrivers;
@@ -96,40 +152,77 @@ export function AdminDashboard({
     () => buildPendingRequestMarkers(pendingRequests, availableVans),
     [availableVans, pendingRequests],
   );
+  const adminPermissionSet = useMemo(() => {
+    if (user?.role !== "admin") {
+      return new Set<string>();
+    }
+    const permissions = user.admin_permissions;
+    if (!permissions || permissions.length === 0) {
+      return new Set(DEFAULT_ADMIN_PERMISSIONS);
+    }
+    return new Set(permissions);
+  }, [user?.admin_permissions, user?.role]);
+  const canManageUsers = adminPermissionSet.has("users:manage");
+  const canManageVans = adminPermissionSet.has("vans:manage");
+  const canDispatchTrips = adminPermissionSet.has("dispatch:write");
+  const canManageAlerts = adminPermissionSet.has("alerts:manage");
+  const canManagePolicy = adminPermissionSet.has("policy:manage");
+  const canExportAudit = adminPermissionSet.has("audit:export");
 
   async function refresh() {
     if (!token) return;
-    const [
-      dashboardData,
-      vanData,
-      employeeData,
-      driverData,
-      tripData,
-      pendingRequestData,
-      alertData,
-      aiInsights,
-    ] =
-      await Promise.all([
-        api.getAdminDashboard(token),
-        api.getAdminVans(token),
-        api.getAdminEmployees(token),
-        api.getAdminDrivers(token),
-        api.getAdminTrips(token),
-        api.getAdminPendingRequests(token),
-        api.getAdminAlerts(token),
-        api.getAIInsights(token),
-      ]);
-    setFallbackDashboard(dashboardData);
-    setFallbackVans(vanData);
-    setFallbackEmployees(employeeData);
-    setFallbackDrivers(driverData);
-    setFallbackTrips(tripData);
-    setFallbackPendingRequests(pendingRequestData);
-    setFallbackAlerts(alertData);
-    setFallbackInsights(aiInsights);
-    if (selectedTripHistoryId) {
-      const history = await api.getAdminTripEvents(token, selectedTripHistoryId);
-      setSelectedTripEvents(history);
+    setKpiLoading(true);
+    try {
+      const [
+        dashboardData,
+        kpiData,
+        profilingData,
+        slaData,
+        incidentData,
+        vanData,
+        employeeData,
+        driverData,
+        tripData,
+        pendingRequestData,
+        alertData,
+        policyData,
+        aiInsights,
+      ] =
+        await Promise.all([
+          api.getAdminDashboard(token),
+          api.getAdminKpis(token, kpiWindow),
+          api.getAdminProfiling(token),
+          api.getAdminSla(token),
+          api.getAdminIncidents(token, { includeResolved: true, limit: 18 }),
+          api.getAdminVans(token),
+          api.getAdminEmployees(token),
+          api.getAdminDrivers(token),
+          api.getAdminTrips(token),
+          api.getAdminPendingRequests(token),
+          api.getAdminAlerts(token),
+          api.getAdminPolicy(token),
+          api.getAIInsights(token),
+        ]);
+      setFallbackDashboard(dashboardData);
+      setFallbackKpis(kpiData);
+      setFallbackProfiling(profilingData);
+      setFallbackSla(slaData);
+      setFallbackIncidents(incidentData);
+      setFallbackVans(vanData);
+      setFallbackEmployees(employeeData);
+      setFallbackDrivers(driverData);
+      setFallbackTrips(tripData);
+      setFallbackPendingRequests(pendingRequestData);
+      setFallbackAlerts(alertData);
+      setFallbackPolicy(policyData);
+      setPolicyDraft(JSON.stringify(policyData, null, 2));
+      setFallbackInsights(aiInsights);
+      if (selectedTripHistoryId) {
+        const history = await api.getAdminTripEvents(token, selectedTripHistoryId);
+        setSelectedTripEvents(history);
+      }
+    } finally {
+      setKpiLoading(false);
     }
   }
 
@@ -155,6 +248,10 @@ export function AdminDashboard({
   async function handleCreateUser(event: React.FormEvent) {
     event.preventDefault();
     if (!token) return;
+    if (!canManageUsers) {
+      setError("Your admin scope cannot create users.");
+      return;
+    }
     setMessage(null);
     setError(null);
     try {
@@ -164,6 +261,10 @@ export function AdminDashboard({
         password: userForm.password,
         phone: userForm.phone || undefined,
         role: userForm.role as "employee" | "driver" | "admin",
+        admin_scope:
+          userForm.role === "admin"
+            ? (userForm.admin_scope as "supervisor" | "dispatcher" | "viewer" | "support")
+            : undefined,
       });
       setMessage(`Created ${userForm.role} ${userForm.name}.`);
       setUserForm({
@@ -172,6 +273,7 @@ export function AdminDashboard({
         password: "",
         phone: "",
         role: "employee",
+        admin_scope: "supervisor",
       });
       await Promise.all([refresh(), refreshBrief()]);
     } catch (submissionError) {
@@ -186,6 +288,10 @@ export function AdminDashboard({
   async function handleCreateVan(event: React.FormEvent) {
     event.preventDefault();
     if (!token) return;
+    if (!canManageVans) {
+      setError("Your admin scope cannot create vans.");
+      return;
+    }
     setMessage(null);
     setError(null);
     try {
@@ -214,6 +320,10 @@ export function AdminDashboard({
 
   async function handleResolveAlert(alertId: string) {
     if (!token) return;
+    if (!canManageAlerts) {
+      setError("Your admin scope cannot resolve alerts.");
+      return;
+    }
     setMessage(null);
     setError(null);
     try {
@@ -229,6 +339,10 @@ export function AdminDashboard({
 
   async function handleReassignTrip(tripId: string) {
     if (!token) return;
+    if (!canDispatchTrips) {
+      setError("Your admin scope cannot reassign trips.");
+      return;
+    }
     const selectedVanId = selectedVanByTrip[tripId];
     if (!selectedVanId) {
       setError("Choose an available van before reassigning the trip.");
@@ -249,6 +363,10 @@ export function AdminDashboard({
 
   async function handleCancelTrip(tripId: string) {
     if (!token) return;
+    if (!canDispatchTrips) {
+      setError("Your admin scope cannot cancel trips.");
+      return;
+    }
     setMessage(null);
     setError(null);
     try {
@@ -259,6 +377,106 @@ export function AdminDashboard({
       setError(
         cancelError instanceof Error ? cancelError.message : "Could not cancel trip.",
       );
+    }
+  }
+
+  async function handleSavePolicy(event: React.FormEvent) {
+    event.preventDefault();
+    if (!token) return;
+    if (!canManagePolicy) {
+      setError("Your admin scope cannot update policy configuration.");
+      return;
+    }
+    setMessage(null);
+    setError(null);
+    setPolicySaving(true);
+    try {
+      const parsed = JSON.parse(policyDraft) as CommutePolicyConfig;
+      const updated = await api.updateAdminPolicy(token, parsed);
+      setFallbackPolicy(updated);
+      setPolicyDraft(JSON.stringify(updated, null, 2));
+      setMessage("Policy configuration updated.");
+      await refreshBrief();
+    } catch (policyError) {
+      setError(
+        policyError instanceof Error
+          ? policyError.message
+          : "Could not save policy configuration.",
+      );
+    } finally {
+      setPolicySaving(false);
+    }
+  }
+
+  async function handleSimulatePolicy(event: React.FormEvent) {
+    event.preventDefault();
+    if (!token) return;
+    if (!canManagePolicy) {
+      setError("Your admin scope cannot run policy simulation.");
+      return;
+    }
+    setMessage(null);
+    setError(null);
+    try {
+      const result = await api.simulateAdminPolicy(token, {
+        pickup_latitude: Number(policySimulation.pickup_latitude),
+        pickup_longitude: Number(policySimulation.pickup_longitude),
+        destination_latitude: Number(policySimulation.destination_latitude),
+        destination_longitude: Number(policySimulation.destination_longitude),
+        scheduled_time: policySimulation.scheduled_time
+          ? new Date(policySimulation.scheduled_time).toISOString()
+          : null,
+        role: policySimulation.role,
+        team: policySimulation.team || null,
+        is_women_rider: policySimulation.is_women_rider,
+      });
+      setPolicySimulationResult(result);
+      setMessage(
+        result.allowed
+          ? "Policy simulation passed. Request would be accepted."
+          : "Policy simulation failed. Review violations below.",
+      );
+    } catch (simulationError) {
+      setError(
+        simulationError instanceof Error
+          ? simulationError.message
+          : "Could not run policy simulation.",
+      );
+    }
+  }
+
+  async function handleExportAudit() {
+    if (!token) return;
+    if (!canExportAudit) {
+      setError("Your admin scope cannot export audit logs.");
+      return;
+    }
+    setAuditExporting(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const exportPayload = await api.exportAdminAudit(token, {
+        includeAlerts: true,
+        limit: 1000,
+      });
+      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "audit-export.json";
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+      setMessage(`Exported ${exportPayload.record_count} audit records.`);
+    } catch (exportError) {
+      setError(
+        exportError instanceof Error ? exportError.message : "Could not export audit logs.",
+      );
+    } finally {
+      setAuditExporting(false);
     }
   }
 
@@ -296,7 +514,12 @@ export function AdminDashboard({
         />
         <section className="metric-panel">
           <span>Realtime Feed</span>
-          <LiveStatusBadge state={connectionState} lastUpdatedAt={lastMessageAt} />
+          <LiveStatusBadge
+            state={connectionState}
+            quality={connectionQuality}
+            lagSeconds={streamLagSeconds}
+            lastUpdatedAt={lastMessageAt}
+          />
           <p>{streamError || "Fleet, trip, and demand signals are streaming live."}</p>
         </section>
       </div>
@@ -306,6 +529,96 @@ export function AdminDashboard({
           {message && <div className="success-banner">{message}</div>}
           {error && <div className="error-banner">{error}</div>}
         </div>
+      )}
+
+      {section === "overview" && (
+        <section className="panel kpi-panel">
+          <div className="kpi-toolbar">
+            <div>
+              <p className="eyebrow">Baseline Metrics</p>
+              <h3>Stage 0 KPI snapshot</h3>
+            </div>
+            <label className="kpi-window-picker">
+              <span className="eyebrow">Window</span>
+              <select
+                value={kpiWindow}
+                onChange={(event) => setKpiWindow(event.target.value as KPIWindow)}
+              >
+                <option value="today">Today</option>
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+              </select>
+            </label>
+          </div>
+          <div className="content-grid five-column kpi-grid">
+            <MetricPanel
+              label="P95 wait"
+              value={formatKpiMetric(kpis?.metrics.p95_wait_time_minutes, " min")}
+              detail="request to pickup"
+            />
+            <MetricPanel
+              label="On-time pickup"
+              value={formatKpiMetric(kpis?.metrics.on_time_pickup_percent, "%")}
+              detail="scheduled rides"
+            />
+            <MetricPanel
+              label="Seat utilization"
+              value={formatKpiMetric(kpis?.metrics.seat_utilization_percent, "%")}
+              detail="completed trips"
+            />
+            <MetricPanel
+              label="Deadhead km/trip"
+              value={formatKpiMetric(kpis?.metrics.deadhead_km_per_trip, " km")}
+              detail="pre-pickup reposition"
+            />
+            <MetricPanel
+              label="Dispatch success"
+              value={formatKpiMetric(kpis?.metrics.dispatch_success_percent, "%")}
+              detail="decided requests"
+            />
+          </div>
+          <p className="muted-copy">
+            {kpiLoading
+              ? "Refreshing KPI snapshot..."
+              : `Window evaluated from ${kpis ? formatDateTime(kpis.window_start) : "N/A"} to ${kpis ? formatDateTime(kpis.window_end) : "N/A"}.`}
+          </p>
+        </section>
+      )}
+
+      {section === "overview" && profiling && (
+        <section className="panel kpi-panel">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Domain Profiling</p>
+              <h3>Employee, driver, and admin API health</h3>
+            </div>
+            <span className="muted-copy">
+              Updated {formatTimestamp(profiling.generated_at)}
+            </span>
+          </div>
+          <div className="content-grid three-column">
+            {profiling.profiles.map((profile) => (
+              <div className="list-card compact-card" key={profile.domain}>
+                <div>
+                  <strong>{profile.domain}</strong>
+                  <p>
+                    p95 latency {formatLatency(profile.p95_latency_ms)} · avg{" "}
+                    {formatLatency(profile.average_latency_ms)}
+                  </p>
+                  <p>
+                    requests {profile.request_count} · errors {profile.error_count} (
+                    {profile.error_rate_percent.toFixed(1)}%)
+                  </p>
+                  <p>
+                    slow requests {profile.slow_request_count} (
+                    {profile.slow_request_rate_percent.toFixed(1)}% over{" "}
+                    {profiling.slow_request_threshold_ms} ms)
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {section === "overview" && (
@@ -329,6 +642,87 @@ export function AdminDashboard({
               onRefresh={() => void refreshBrief()}
               onAsk={askCopilot}
             />
+          </div>
+
+          <div className="content-grid two-column">
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">SLA Monitor</p>
+                  <h3>Reliability health</h3>
+                </div>
+                <span className={`priority-pill ${sla?.health === "critical" ? "high" : sla?.health === "warning" ? "medium" : "low"}`}>
+                  {sla?.health || "healthy"}
+                </span>
+              </div>
+              <div className="stack compact">
+                <div className="list-card compact-card">
+                  <div>
+                    <strong>{sla?.open_breach_count ?? 0} open breach signal(s)</strong>
+                    <p>
+                      Dispatch delay, rider wait, and location freshness are evaluated continuously.
+                    </p>
+                  </div>
+                </div>
+                {(sla?.breaches || []).length === 0 ? (
+                  <p className="muted-copy">No SLA breaches currently open.</p>
+                ) : (
+                  (sla?.breaches || []).map((breach) => (
+                    <div className="list-card compact-card" key={breach.breach_type}>
+                      <div>
+                        <strong>{breach.title}</strong>
+                        <p>{breach.note}</p>
+                        <p>
+                          {breach.count} item(s) over threshold ({breach.threshold_label})
+                        </p>
+                      </div>
+                      <span className={`priority-pill ${breach.severity}`}>
+                        {breach.severity}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Incident Timeline</p>
+                  <h3>Recent operational incidents</h3>
+                </div>
+              </div>
+              <div className="stack compact">
+                {incidents.length === 0 ? (
+                  <p className="muted-copy">No incidents are recorded for this time range yet.</p>
+                ) : (
+                  incidents.slice(0, 6).map((incident) => (
+                    <div className="list-card compact-card event-card" key={incident.id}>
+                      <div>
+                        <strong>{incident.title || "Incident"}</strong>
+                        <p>{incident.message}</p>
+                        <p>
+                          {incident.breach_type
+                            ? `Type: ${incident.breach_type.replaceAll("_", " ")}`
+                            : `Kind: ${incident.kind.replaceAll("_", " ")}`}
+                        </p>
+                      </div>
+                      <div className="stack compact align-end">
+                        <span className={`priority-pill ${incident.severity}`}>
+                          {incident.severity}
+                        </span>
+                        <span className="status-pill">{incident.status}</span>
+                        <span className="muted-copy">
+                          {incident.created_at
+                            ? formatTimestamp(incident.created_at)
+                            : "recent"}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
           </div>
 
           <div className="content-grid two-column">
@@ -360,6 +754,7 @@ export function AdminDashboard({
                         </span>
                         <button
                           className="ghost-button"
+                          disabled={!canManageAlerts}
                           onClick={() => void handleResolveAlert(alert.id)}
                           type="button"
                         >
@@ -431,6 +826,11 @@ export function AdminDashboard({
                 <h3>Provisioning</h3>
               </div>
             </div>
+            {(!canManageUsers || !canManageVans) && (
+              <p className="muted-copy">
+                Current admin scope is read-only for some provisioning actions.
+              </p>
+            )}
             <div className="content-grid two-column">
               <form className="panel inset-panel stack" onSubmit={handleCreateUser}>
                 <div>
@@ -482,6 +882,7 @@ export function AdminDashboard({
                   Role
                   <select
                     value={userForm.role}
+                    disabled={!canManageUsers}
                     onChange={(event) =>
                       setUserForm((current) => ({ ...current, role: event.target.value }))
                     }
@@ -491,7 +892,27 @@ export function AdminDashboard({
                     <option value="admin">Admin</option>
                   </select>
                 </label>
-                <button className="primary-button" type="submit">
+                {userForm.role === "admin" && (
+                  <label>
+                    Admin scope
+                    <select
+                      value={userForm.admin_scope}
+                      disabled={!canManageUsers}
+                      onChange={(event) =>
+                        setUserForm((current) => ({
+                          ...current,
+                          admin_scope: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="supervisor">supervisor</option>
+                      <option value="dispatcher">dispatcher</option>
+                      <option value="viewer">viewer</option>
+                      <option value="support">support</option>
+                    </select>
+                  </label>
+                )}
+                <button className="primary-button" disabled={!canManageUsers} type="submit">
                   Create user
                 </button>
               </form>
@@ -531,6 +952,7 @@ export function AdminDashboard({
                   Assign driver
                   <select
                     value={vanForm.driver_id}
+                    disabled={!canManageVans}
                     onChange={(event) =>
                       setVanForm((current) => ({ ...current, driver_id: event.target.value }))
                     }
@@ -547,6 +969,7 @@ export function AdminDashboard({
                   Status
                   <select
                     value={vanForm.status}
+                    disabled={!canManageVans}
                     onChange={(event) =>
                       setVanForm((current) => ({ ...current, status: event.target.value }))
                     }
@@ -556,7 +979,7 @@ export function AdminDashboard({
                     <option value="maintenance">maintenance</option>
                   </select>
                 </label>
-                <button className="primary-button" type="submit">
+                <button className="primary-button" disabled={!canManageVans} type="submit">
                   Create van
                 </button>
               </form>
@@ -605,6 +1028,14 @@ export function AdminDashboard({
                 <p className="eyebrow">Trips</p>
                 <h3>Assigned and pooled routes</h3>
               </div>
+              <button
+                className="ghost-button"
+                disabled={!canExportAudit || auditExporting}
+                onClick={() => void handleExportAudit()}
+                type="button"
+              >
+                {auditExporting ? "Exporting..." : "Export audit"}
+              </button>
             </div>
             <div className="table-wrap">
               <table>
@@ -658,6 +1089,7 @@ export function AdminDashboard({
                           </select>
                           <button
                             className="ghost-button"
+                            disabled={!canDispatchTrips}
                             onClick={() => void handleReassignTrip(trip.id)}
                             type="button"
                           >
@@ -665,6 +1097,7 @@ export function AdminDashboard({
                           </button>
                           <button
                             className="ghost-button"
+                            disabled={!canDispatchTrips}
                             onClick={() => void handleCancelTrip(trip.id)}
                             type="button"
                           >
@@ -869,6 +1302,260 @@ export function AdminDashboard({
         </>
       )}
 
+      {section === "policy" && (
+        <div className="content-grid two-column">
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Policy Snapshot</p>
+                <h3>Current commute governance</h3>
+              </div>
+            </div>
+            {policy ? (
+              <div className="stack compact">
+                <div className="list-card compact-card">
+                  <div>
+                    <strong>Role dispatch priority</strong>
+                    <p>
+                      Admin {policy.priority_by_user_role.admin ?? "n/a"} / Employee{" "}
+                      {policy.priority_by_user_role.employee ?? "n/a"} / Driver{" "}
+                      {policy.priority_by_user_role.driver ?? "n/a"}
+                    </p>
+                  </div>
+                </div>
+                <div className="list-card compact-card">
+                  <div>
+                    <strong>Scheduling controls</strong>
+                    <p>
+                      Min lead {policy.schedule.min_lead_minutes} min, max horizon{" "}
+                      {policy.schedule.max_days_ahead} days.
+                    </p>
+                    <p>
+                      Dispatch cutoff {policy.schedule.dispatch_cutoff_minutes_before_pickup} min
+                      before pickup.
+                    </p>
+                  </div>
+                </div>
+                <div className="list-card compact-card">
+                  <div>
+                    <strong>Cancellation controls</strong>
+                    <p>
+                      Employee cancellation cutoff{" "}
+                      {policy.cancellation.employee_cutoff_minutes_before_pickup} min before
+                      scheduled pickup.
+                    </p>
+                  </div>
+                </div>
+                <div className="list-card compact-card">
+                  <div>
+                    <strong>Service zone + safety window</strong>
+                    <p>
+                      Service zone {policy.service_zone.enabled ? "enabled" : "disabled"}.
+                    </p>
+                    <p>
+                      Women safety window {policy.women_safety_window.enabled ? "enabled" : "disabled"} (
+                      {policy.women_safety_window.start_local_time}-
+                      {policy.women_safety_window.end_local_time}, {policy.women_safety_window.timezone}).
+                    </p>
+                  </div>
+                </div>
+                <span className="muted-copy">
+                  Last updated{" "}
+                  {policy.updated_at ? formatDateTime(policy.updated_at) : "from defaults"}.
+                </span>
+              </div>
+            ) : (
+              <p className="muted-copy">Loading policy snapshot...</p>
+            )}
+          </section>
+
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Policy Studio</p>
+                <h3>Edit and simulate policy</h3>
+              </div>
+            </div>
+            <form className="stack" onSubmit={handleSavePolicy}>
+              <label>
+                Policy JSON
+                <textarea
+                  className="copilot-textarea"
+                  disabled={!canManagePolicy}
+                  value={policyDraft}
+                  onChange={(event) => setPolicyDraft(event.target.value)}
+                  placeholder="Policy JSON will appear here after load."
+                />
+              </label>
+              <button
+                className="primary-button"
+                disabled={policySaving || !canManagePolicy}
+                type="submit"
+              >
+                {policySaving ? "Saving policy..." : "Save policy config"}
+              </button>
+            </form>
+
+            <form className="panel inset-panel stack" onSubmit={handleSimulatePolicy}>
+              <div>
+                <p className="eyebrow">Policy Simulation</p>
+                <h3>Why accepted or rejected</h3>
+              </div>
+              <div className="inline-grid">
+                <label>
+                  Pickup lat
+                  <input
+                    disabled={!canManagePolicy}
+                    value={policySimulation.pickup_latitude}
+                    onChange={(event) =>
+                      setPolicySimulation((current) => ({
+                        ...current,
+                        pickup_latitude: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </label>
+                <label>
+                  Pickup lng
+                  <input
+                    disabled={!canManagePolicy}
+                    value={policySimulation.pickup_longitude}
+                    onChange={(event) =>
+                      setPolicySimulation((current) => ({
+                        ...current,
+                        pickup_longitude: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </label>
+              </div>
+              <div className="inline-grid">
+                <label>
+                  Destination lat
+                  <input
+                    disabled={!canManagePolicy}
+                    value={policySimulation.destination_latitude}
+                    onChange={(event) =>
+                      setPolicySimulation((current) => ({
+                        ...current,
+                        destination_latitude: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </label>
+                <label>
+                  Destination lng
+                  <input
+                    disabled={!canManagePolicy}
+                    value={policySimulation.destination_longitude}
+                    onChange={(event) =>
+                      setPolicySimulation((current) => ({
+                        ...current,
+                        destination_longitude: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </label>
+              </div>
+              <div className="inline-grid">
+                <label>
+                  Role
+                  <select
+                    disabled={!canManagePolicy}
+                    value={policySimulation.role}
+                    onChange={(event) =>
+                      setPolicySimulation((current) => ({
+                        ...current,
+                        role: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="employee">employee</option>
+                    <option value="admin">admin</option>
+                    <option value="driver">driver</option>
+                  </select>
+                </label>
+                <label>
+                  Team (optional)
+                  <input
+                    disabled={!canManagePolicy}
+                    value={policySimulation.team}
+                    onChange={(event) =>
+                      setPolicySimulation((current) => ({
+                        ...current,
+                        team: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+              <label>
+                Scheduled time (optional)
+                <input
+                  type="datetime-local"
+                  disabled={!canManagePolicy}
+                  value={policySimulation.scheduled_time}
+                  onChange={(event) =>
+                    setPolicySimulation((current) => ({
+                      ...current,
+                      scheduled_time: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  disabled={!canManagePolicy}
+                  checked={policySimulation.is_women_rider}
+                  onChange={(event) =>
+                    setPolicySimulation((current) => ({
+                      ...current,
+                      is_women_rider: event.target.checked,
+                    }))
+                  }
+                />
+                Rider is women-safety eligible
+              </label>
+              <button className="secondary-button" disabled={!canManagePolicy} type="submit">
+                Run simulation
+              </button>
+              {policySimulationResult && (
+                <div className="stack compact">
+                  <div className="list-card compact-card">
+                    <div>
+                      <strong>
+                        {policySimulationResult.allowed ? "Allowed" : "Rejected"}
+                      </strong>
+                      <p>
+                        Dispatch priority score: {policySimulationResult.dispatch_priority}
+                      </p>
+                    </div>
+                  </div>
+                  {policySimulationResult.violations.length === 0 ? (
+                    <p className="muted-copy">No policy conflicts detected.</p>
+                  ) : (
+                    policySimulationResult.violations.map((violation) => (
+                      <div className="list-card compact-card" key={violation.code}>
+                        <div>
+                          <strong>{violation.code.replaceAll("_", " ")}</strong>
+                          <p>{violation.message}</p>
+                          {violation.field && <p>Field: {violation.field}</p>}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </form>
+          </section>
+        </div>
+      )}
+
       {(section === "trips" || section === "requests") && (
         <LiveEventsPanel
           events={recentEvents}
@@ -900,6 +1587,7 @@ export function AdminNotificationsPage() {
         title="Operations notifications"
         eyebrow="Notifications"
         includeAlerts
+        enableIncidentActions
         initialNotifications={snapshot?.data.notifications ?? []}
         initialUnreadCount={snapshot?.data.notifications_unread_count ?? 0}
         emptyMessage="Operational alerts, reassignments, and rider notifications will appear here."
@@ -1051,6 +1739,24 @@ function formatTripAcknowledgement(
     return formatTimestamp(acceptedAt);
   }
   return "Awaiting driver";
+}
+
+function formatKpiMetric(
+  value: number | null | undefined,
+  suffix: string,
+  digits: number = 1,
+) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "N/A";
+  }
+  return `${value.toFixed(digits)}${suffix}`;
+}
+
+function formatLatency(value: number | null | undefined) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "N/A";
+  }
+  return `${value.toFixed(1)} ms`;
 }
 
 function formatAge(ageMinutes: number) {

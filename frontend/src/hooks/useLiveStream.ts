@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { api } from "../lib/api";
 import type {
+  LiveConnectionQuality,
   LiveConnectionState,
   LiveOperationalEvent,
   LiveSnapshot,
@@ -33,15 +34,67 @@ export function useLiveStream<TSnapshot extends LiveSnapshot>(token: string | nu
   const [snapshot, setSnapshot] = useState<TSnapshot | null>(null);
   const [connectionState, setConnectionState] =
     useState<LiveConnectionState>("connecting");
+  const [connectionQuality, setConnectionQuality] =
+    useState<LiveConnectionQuality>("critical");
   const [streamError, setStreamError] = useState<string | null>(null);
   const [lastMessageAt, setLastMessageAt] = useState<string | null>(null);
+  const [streamLagSeconds, setStreamLagSeconds] = useState<number | null>(null);
   const [recentEvents, setRecentEvents] = useState<LiveOperationalEvent[]>([]);
+
+  useEffect(() => {
+    if (!token) {
+      setConnectionQuality("critical");
+      setStreamLagSeconds(null);
+      return;
+    }
+
+    const tick = () => {
+      if (streamError || connectionState === "error") {
+        setConnectionQuality("critical");
+      } else if (
+        connectionState === "connecting" ||
+        connectionState === "reconnecting"
+      ) {
+        setConnectionQuality("degraded");
+      }
+
+      if (!lastMessageAt) {
+        setStreamLagSeconds(null);
+        return;
+      }
+
+      const lag = Math.max(
+        0,
+        Math.floor((Date.now() - new Date(lastMessageAt).getTime()) / 1000),
+      );
+      setStreamLagSeconds(lag);
+
+      if (connectionState !== "live") {
+        return;
+      }
+      if (lag <= 6) {
+        setConnectionQuality("good");
+        return;
+      }
+      if (lag <= 15) {
+        setConnectionQuality("degraded");
+        return;
+      }
+      setConnectionQuality("critical");
+    };
+
+    tick();
+    const intervalId = window.setInterval(tick, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [connectionState, lastMessageAt, streamError, token]);
 
   useEffect(() => {
     if (!token) {
       setSnapshot(null);
       setRecentEvents([]);
       setConnectionState("error");
+      setConnectionQuality("critical");
+      setStreamLagSeconds(null);
       setStreamError("Sign in to start realtime updates.");
       return;
     }
@@ -54,8 +107,10 @@ export function useLiveStream<TSnapshot extends LiveSnapshot>(token: string | nu
 
     const markLive = () => {
       setConnectionState("live");
+      setConnectionQuality("good");
       setStreamError(null);
       setLastMessageAt(new Date().toISOString());
+      setStreamLagSeconds(0);
     };
 
     const pushEvent = (event: LiveOperationalEvent) => {
@@ -227,8 +282,10 @@ export function useLiveStream<TSnapshot extends LiveSnapshot>(token: string | nu
   return {
     snapshot,
     connectionState,
+    connectionQuality,
     streamError,
     lastMessageAt,
+    streamLagSeconds,
     recentEvents,
   };
 }

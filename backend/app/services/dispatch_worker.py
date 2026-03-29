@@ -19,7 +19,12 @@ from app.services.notification_service import (
     queue_notification_once,
     resolve_stale_dispatch_alerts,
 )
+from app.services.policy_service import sort_rides_by_policy_priority
 from app.services.ride_service import attempt_match_ride, fail_ride_request
+from app.services.sla_service import (
+    create_sla_alerts_for_company,
+    list_sla_monitor_company_ids,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -92,6 +97,7 @@ def _recover_dispatch_state(db) -> None:
             )
         )
     ).all()
+    immediate_rides = sort_rides_by_policy_priority(db, immediate_rides)
 
     for ride in immediate_rides:
         ride_age = (now - (ride.requested_at or now)).total_seconds()
@@ -117,6 +123,7 @@ def _recover_dispatch_state(db) -> None:
             )
         )
     ).all()
+    scheduled_rides = sort_rides_by_policy_priority(db, scheduled_rides)
 
     for ride in scheduled_rides:
         if ride.scheduled_time is None:
@@ -322,9 +329,11 @@ def _process_dispatch_cycle(db) -> None:
         .distinct()
     ).all()
     touched_company_ids.update(company_id for company_id in alert_company_ids if company_id is not None)
+    touched_company_ids.update(list_sla_monitor_company_ids(db))
 
     for company_id in touched_company_ids:
         resolve_stale_dispatch_alerts(db, company_id)
+        create_sla_alerts_for_company(db, company_id)
 
 
 async def dispatch_worker_loop(stop_event: asyncio.Event) -> None:

@@ -1,23 +1,36 @@
 import type {
   AlertSummary,
   AdminDashboardSummary,
+  AdminKPISummary,
   AdminPendingRideSummary,
   AdminUserCreateInput,
   AdminVanCreateInput,
   AIInsight,
+  AuditExportResponse,
+  DomainProfilingSnapshot,
   DispatchEventSummary,
+  EnterpriseIdentityConfig,
+  EnterpriseIdentityConfigUpdate,
+  EnterpriseSSOStartRequest,
+  EnterpriseSSOStartResponse,
   AuthResponse,
   CopilotBrief,
   CopilotReply,
+  CommutePolicyConfig,
   DriverDashboardSummary,
   DriverTripSummary,
   GeocodeResult,
+  IncidentTimelineItem,
   NotificationFeed,
   NotificationSummary,
+  PolicySimulationRequest,
+  PolicySimulationResponse,
   RideSummary,
   RoutePlan,
   RouteWaypoint,
+  SLASnapshotSummary,
   TripSummary,
+  KPIWindow,
   UserProfile,
   VanSummary,
 } from "./types";
@@ -25,7 +38,7 @@ import type {
 const API_BASE_URL =
   import.meta.env.VITE_API_URL?.trim() || "http://localhost:8000/api/v1";
 
-type HttpMethod = "GET" | "POST";
+type HttpMethod = "GET" | "POST" | "PUT";
 
 async function request<T>(
   path: string,
@@ -129,6 +142,12 @@ export const api = {
     return request<AuthResponse>("/auth/login", {
       method: "POST",
       body: { email, password, requested_role: requestedRole },
+    });
+  },
+  startEnterpriseSso(payload: EnterpriseSSOStartRequest) {
+    return request<EnterpriseSSOStartResponse>("/auth/enterprise/sso/start", {
+      method: "POST",
+      body: payload,
     });
   },
   register(payload: {
@@ -242,6 +261,49 @@ export const api = {
   getAdminDashboard(token: string) {
     return request<AdminDashboardSummary>("/admin/dashboard", { token });
   },
+  getAdminSla(token: string) {
+    return request<SLASnapshotSummary>("/admin/sla", { token });
+  },
+  getAdminIncidents(
+    token: string,
+    options?: { includeResolved?: boolean; limit?: number },
+  ) {
+    const params = new URLSearchParams();
+    if (typeof options?.includeResolved === "boolean") {
+      params.set("include_resolved", String(options.includeResolved));
+    }
+    if (typeof options?.limit === "number") {
+      params.set("limit", String(options.limit));
+    }
+    const query = params.toString();
+    return request<IncidentTimelineItem[]>(`/admin/incidents${query ? `?${query}` : ""}`, {
+      token,
+    });
+  },
+  getAdminPolicy(token: string) {
+    return request<CommutePolicyConfig>("/admin/policy", { token });
+  },
+  updateAdminPolicy(token: string, payload: CommutePolicyConfig) {
+    return request<CommutePolicyConfig>("/admin/policy", {
+      method: "PUT",
+      token,
+      body: payload,
+    });
+  },
+  simulateAdminPolicy(token: string, payload: PolicySimulationRequest) {
+    return request<PolicySimulationResponse>("/admin/policy/simulate", {
+      method: "POST",
+      token,
+      body: payload,
+    });
+  },
+  getAdminKpis(token: string, window: KPIWindow = "today") {
+    const params = new URLSearchParams({ window });
+    return request<AdminKPISummary>(`/admin/kpis?${params.toString()}`, { token });
+  },
+  getAdminProfiling(token: string) {
+    return request<DomainProfilingSnapshot>("/admin/profiling", { token });
+  },
   getAdminVans(token: string) {
     return request<VanSummary[]>("/admin/vans", { token });
   },
@@ -262,6 +324,28 @@ export const api = {
   },
   getAdminAlerts(token: string) {
     return request<AlertSummary[]>("/admin/alerts", { token });
+  },
+  getAdminIdentityConfig(token: string) {
+    return request<EnterpriseIdentityConfig>("/admin/identity/config", { token });
+  },
+  updateAdminIdentityConfig(token: string, payload: EnterpriseIdentityConfigUpdate) {
+    return request<EnterpriseIdentityConfig>("/admin/identity/config", {
+      method: "PUT",
+      token,
+      body: payload,
+    });
+  },
+  exportAdminAudit(token: string, options?: { includeAlerts?: boolean; limit?: number }) {
+    const params = new URLSearchParams({ format: "json" });
+    if (typeof options?.includeAlerts === "boolean") {
+      params.set("include_alerts", String(options.includeAlerts));
+    }
+    if (typeof options?.limit === "number") {
+      params.set("limit", String(options.limit));
+    }
+    return request<AuditExportResponse>(`/admin/audit/export?${params.toString()}`, {
+      token,
+    });
   },
   getNotifications(
     token: string,

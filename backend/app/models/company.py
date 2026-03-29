@@ -43,6 +43,8 @@ class Company(Base):
             "weekend": {"start": "08:00", "end": "20:00"},
         },
     )
+    policy_config = Column(JSONType, default={})
+    identity_config = Column(JSONType, default={})
     max_pickup_radius_meters = Column(Integer, default=800)
     max_detour_minutes = Column(Integer, default=15)
     

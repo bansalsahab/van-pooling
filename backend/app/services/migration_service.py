@@ -10,7 +10,11 @@ from sqlalchemy import inspect
 from app.core.config import settings
 from app.database import engine
 from app.services.notification_service import ensure_notification_schema
-from app.services.runtime_schema_service import ensure_trip_schema
+from app.services.runtime_schema_service import (
+    ensure_company_schema,
+    ensure_trip_schema,
+    ensure_user_schema,
+)
 
 
 MANAGED_TABLES = {
@@ -49,6 +53,8 @@ def upgrade_database_schema() -> None:
     config = _alembic_config()
     if _has_legacy_schema_without_alembic_version():
         ensure_trip_schema()
+        ensure_company_schema()
+        ensure_user_schema()
         ensure_notification_schema()
         command.stamp(config, "head")
     command.upgrade(config, "head")

@@ -2,6 +2,10 @@
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from typing import Literal
+
+
+AdminScopeValue = Literal["supervisor", "dispatcher", "viewer", "support"]
 
 
 class UserSummary(BaseModel):
@@ -15,6 +19,8 @@ class UserSummary(BaseModel):
     email: EmailStr
     phone: str | None = None
     role: str
+    admin_scope: AdminScopeValue | None = None
+    admin_permissions: list[str] = Field(default_factory=list)
     status: str
 
 
@@ -38,3 +44,4 @@ class AdminUserCreate(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     phone: str | None = Field(default=None, max_length=20)
     role: str
+    admin_scope: AdminScopeValue | None = None

@@ -8,9 +8,13 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.models.user import User, UserStatus
+from app.models.notification import Notification, NotificationStatus, NotificationType
 from app.models.ride_request import RideRequest, RideRequestStatus
+from app.models.van import Van, VanStatus
 from app.schemas.maps import GeocodeResponse, RoutePlan, RouteWaypoint
 from app.services.ride_service import attempt_match_ride
+from app.services.sla_service import create_sla_alerts_for_company
 
 
 def _ride_payload(*, scheduled_time: str | None = None) -> dict:
@@ -175,6 +179,657 @@ def test_admin_trip_reassignment_flow(client, auth_headers, seeded_data):
     )
     assert driver2_trip_response.status_code == 200
     assert driver2_trip_response.json()["id"] == trip_id
+
+
+def test_admin_kpis_snapshot_endpoint(client, auth_headers, seeded_data):
+    employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
+    driver_headers = auth_headers(seeded_data["users"]["driver_a1"], "driver")
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+
+    first_ride_response = client.post(
+        f"{settings.API_V1_STR}/rides/request",
+        headers=employee_headers,
+        json=_ride_payload(),
+    )
+    assert first_ride_response.status_code == 200, first_ride_response.text
+    first_ride = first_ride_response.json()
+
+    first_trip_response = client.get(
+        f"{settings.API_V1_STR}/driver/trips/active",
+        headers=driver_headers,
+    )
+    assert first_trip_response.status_code == 200, first_trip_response.text
+    first_trip = first_trip_response.json()
+    passenger_ride_id = first_trip["passengers"][0]["ride_request_id"]
+
+    assert client.post(
+        f"{settings.API_V1_STR}/driver/trips/{first_trip['id']}/accept",
+        headers=driver_headers,
+    ).status_code == 200
+    assert client.post(
+        f"{settings.API_V1_STR}/driver/trips/{first_trip['id']}/start",
+        headers=driver_headers,
+    ).status_code == 200
+    assert client.post(
+        f"{settings.API_V1_STR}/driver/trips/{first_trip['id']}/pickup/{passenger_ride_id}",
+        headers=driver_headers,
+    ).status_code == 200
+    assert client.post(
+        f"{settings.API_V1_STR}/driver/trips/{first_trip['id']}/dropoff/{passenger_ride_id}",
+        headers=driver_headers,
+    ).status_code == 200
+    assert client.post(
+        f"{settings.API_V1_STR}/driver/trips/{first_trip['id']}/complete",
+        headers=driver_headers,
+    ).status_code == 200
+
+    second_ride_response = client.post(
+        f"{settings.API_V1_STR}/rides/request",
+        headers=employee_headers,
+        json=_ride_payload(),
+    )
+    assert second_ride_response.status_code == 200, second_ride_response.text
+    second_ride = second_ride_response.json()
+    assert second_ride["status"] == "matched"
+
+    kpi_response = client.get(
+        f"{settings.API_V1_STR}/admin/kpis?window=7d",
+        headers=admin_headers,
+    )
+    assert kpi_response.status_code == 200, kpi_response.text
+    kpis = kpi_response.json()
+    assert kpis["window"] == "7d"
+    assert kpis["counters"]["rides_considered"] >= 2
+    assert kpis["counters"]["dispatch_decisions_considered"] >= 2
+    assert kpis["metrics"]["p95_wait_time_minutes"] is not None
+    assert kpis["metrics"]["dispatch_success_percent"] is not None
+    assert kpis["metrics"]["seat_utilization_percent"] is not None
+    assert kpis["metrics"]["deadhead_km_per_trip"] is not None
+    assert kpis["metrics"]["dispatch_success_percent"] >= 50
+    assert first_ride["id"] != second_ride["id"]
+
+
+def test_admin_domain_profiling_snapshot(client, auth_headers, seeded_data):
+    employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
+    driver_headers = auth_headers(seeded_data["users"]["driver_a1"], "driver")
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+
+    employee_response = client.get(
+        f"{settings.API_V1_STR}/rides/history",
+        headers=employee_headers,
+    )
+    assert employee_response.status_code == 200, employee_response.text
+
+    driver_response = client.get(
+        f"{settings.API_V1_STR}/driver/dashboard",
+        headers=driver_headers,
+    )
+    assert driver_response.status_code == 200, driver_response.text
+
+    admin_dashboard_response = client.get(
+        f"{settings.API_V1_STR}/admin/dashboard",
+        headers=admin_headers,
+    )
+    assert admin_dashboard_response.status_code == 200, admin_dashboard_response.text
+
+    profiling_response = client.get(
+        f"{settings.API_V1_STR}/admin/profiling",
+        headers=admin_headers,
+    )
+    assert profiling_response.status_code == 200, profiling_response.text
+    profiling = profiling_response.json()
+    assert profiling["profiles"]
+
+    domain_map = {item["domain"]: item for item in profiling["profiles"]}
+    assert {"employee", "driver", "admin"}.issubset(domain_map.keys())
+    assert domain_map["employee"]["request_count"] >= 1
+    assert domain_map["driver"]["request_count"] >= 1
+    assert domain_map["admin"]["request_count"] >= 1
+    assert domain_map["employee"]["p95_latency_ms"] is not None
+    assert domain_map["driver"]["p95_latency_ms"] is not None
+
+
+def test_admin_sla_snapshot_and_incidents(
+    client,
+    auth_headers,
+    seeded_data,
+    db_session_factory,
+):
+    employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+
+    ride_response = client.post(
+        f"{settings.API_V1_STR}/rides/request",
+        headers=employee_headers,
+        json=_ride_payload(),
+    )
+    assert ride_response.status_code == 200, ride_response.text
+    ride = ride_response.json()
+
+    db = db_session_factory()
+    try:
+        ride_row = db.scalar(select(RideRequest).where(RideRequest.id == UUID(ride["id"])))
+        assert ride_row is not None
+        ride_row.status = RideRequestStatus.REQUESTED
+        ride_row.actual_pickup_time = None
+        ride_row.requested_at = datetime.utcnow() - timedelta(minutes=20)
+
+        stale_van = db.scalar(select(Van).where(Van.id == UUID(seeded_data["vans"]["van_a1"])))
+        assert stale_van is not None
+        stale_van.status = VanStatus.AVAILABLE
+        stale_van.last_location_update = datetime.utcnow() - timedelta(
+            seconds=settings.VAN_STALE_ALERT_SECONDS + 120
+        )
+
+        create_sla_alerts_for_company(db, ride_row.company_id)
+        admin_user = db.scalar(
+            select(User).where(User.email == seeded_data["users"]["admin_a"])
+        )
+        assert admin_user is not None
+        db.add(
+            Notification(
+                user_id=admin_user.id,
+                type=NotificationType.PUSH,
+                title="SLA breach: Dispatch decision delay",
+                message="1 item(s) breached (>100s from request).",
+                status=NotificationStatus.PENDING,
+                metadata_json={
+                    "kind": "sla_breach",
+                    "severity": "high",
+                    "breach_type": "dispatch_delay",
+                    "entity_type": "ride",
+                    "entity_id": str(ride_row.id),
+                },
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    sla_response = client.get(
+        f"{settings.API_V1_STR}/admin/sla",
+        headers=admin_headers,
+    )
+    assert sla_response.status_code == 200, sla_response.text
+    sla_snapshot = sla_response.json()
+    assert sla_snapshot["open_breach_count"] >= 1
+    breach_types = {item["breach_type"] for item in sla_snapshot["breaches"]}
+    assert "dispatch_delay" in breach_types
+    assert "location_freshness" in breach_types
+
+    incidents_response = client.get(
+        f"{settings.API_V1_STR}/admin/incidents?include_resolved=true&limit=20",
+        headers=admin_headers,
+    )
+    assert incidents_response.status_code == 200, incidents_response.text
+    incidents = incidents_response.json()
+    assert incidents
+    assert any(item.get("breach_type") for item in incidents)
+
+
+def test_admin_notification_incident_resolution_flow(
+    client,
+    auth_headers,
+    seeded_data,
+    db_session_factory,
+):
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+
+    db = db_session_factory()
+    alert_id: UUID | None = None
+    try:
+        admin_user = db.scalar(
+            select(User).where(User.email == seeded_data["users"]["admin_a"])
+        )
+        assert admin_user is not None
+        notification = Notification(
+            user_id=admin_user.id,
+            type=NotificationType.PUSH,
+            title="SLA breach: Dispatch decision delay",
+            message="1 item(s) breached (>100s from request).",
+            status=NotificationStatus.PENDING,
+            metadata_json={
+                "kind": "sla_breach",
+                "severity": "high",
+                "breach_type": "dispatch_delay",
+                "entity_type": "ride",
+                "entity_id": "ride-test-id",
+            },
+        )
+        db.add(notification)
+        db.commit()
+        db.refresh(notification)
+        alert_id = notification.id
+    finally:
+        db.close()
+
+    notifications_response = client.get(
+        f"{settings.API_V1_STR}/notifications?include_alerts=true&limit=20",
+        headers=admin_headers,
+    )
+    assert notifications_response.status_code == 200, notifications_response.text
+    notifications = notifications_response.json()["items"]
+    incident_notification = next(
+        item for item in notifications if item["id"] == str(alert_id)
+    )
+    assert incident_notification["kind"] == "sla_breach"
+    assert incident_notification["breach_type"] == "dispatch_delay"
+
+    resolve_response = client.post(
+        f"{settings.API_V1_STR}/admin/alerts/{alert_id}/resolve",
+        headers=admin_headers,
+    )
+    assert resolve_response.status_code == 200, resolve_response.text
+
+    notifications_after = client.get(
+        f"{settings.API_V1_STR}/notifications?include_alerts=true&limit=20",
+        headers=admin_headers,
+    )
+    assert notifications_after.status_code == 200, notifications_after.text
+    refreshed = notifications_after.json()["items"]
+    resolved_item = next(item for item in refreshed if item["id"] == str(alert_id))
+    assert resolved_item["status"] == "sent"
+    assert resolved_item["read_at"] is not None
+
+
+def test_admin_policy_update_and_simulation(client, auth_headers, seeded_data):
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+
+    update_response = client.put(
+        f"{settings.API_V1_STR}/admin/policy",
+        headers=admin_headers,
+        json={
+            "priority_by_user_role": {"admin": 1, "employee": 5, "driver": 10},
+            "priority_by_team": {"ops": 2},
+            "service_zone": {
+                "enabled": True,
+                "pickup_bounds": {
+                    "min_latitude": 12.8,
+                    "max_latitude": 13.2,
+                    "min_longitude": 77.4,
+                    "max_longitude": 77.8,
+                },
+                "destination_bounds": {
+                    "min_latitude": 12.8,
+                    "max_latitude": 13.2,
+                    "min_longitude": 77.4,
+                    "max_longitude": 77.8,
+                },
+            },
+            "schedule": {
+                "min_lead_minutes": 15,
+                "max_days_ahead": 14,
+                "dispatch_cutoff_minutes_before_pickup": 10,
+            },
+            "cancellation": {"employee_cutoff_minutes_before_pickup": 5},
+            "women_safety_window": {
+                "enabled": False,
+                "start_local_time": "20:00",
+                "end_local_time": "06:00",
+                "timezone": "Asia/Kolkata",
+                "requires_scheduled_rides": False,
+                "apply_to_all_riders": False,
+            },
+        },
+    )
+    assert update_response.status_code == 200, update_response.text
+    updated_policy = update_response.json()
+    assert updated_policy["service_zone"]["enabled"] is True
+
+    blocked_simulation = client.post(
+        f"{settings.API_V1_STR}/admin/policy/simulate",
+        headers=admin_headers,
+        json={
+            "pickup_latitude": 19.0760,
+            "pickup_longitude": 72.8777,
+            "destination_latitude": 19.0820,
+            "destination_longitude": 72.8890,
+            "role": "employee",
+        },
+    )
+    assert blocked_simulation.status_code == 200, blocked_simulation.text
+    blocked_result = blocked_simulation.json()
+    assert blocked_result["allowed"] is False
+    assert any(
+        item["code"] == "pickup_outside_service_zone"
+        for item in blocked_result["violations"]
+    )
+
+    allowed_simulation = client.post(
+        f"{settings.API_V1_STR}/admin/policy/simulate",
+        headers=admin_headers,
+        json={
+            "pickup_latitude": 12.9716,
+            "pickup_longitude": 77.5946,
+            "destination_latitude": 12.9800,
+            "destination_longitude": 77.6000,
+            "role": "employee",
+            "team": "ops",
+        },
+    )
+    assert allowed_simulation.status_code == 200, allowed_simulation.text
+    allowed_result = allowed_simulation.json()
+    assert allowed_result["allowed"] is True
+    assert allowed_result["dispatch_priority"] == 2
+
+
+def test_policy_service_zone_blocks_out_of_zone_ride_request(
+    client,
+    auth_headers,
+    seeded_data,
+):
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+    employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
+
+    policy_response = client.put(
+        f"{settings.API_V1_STR}/admin/policy",
+        headers=admin_headers,
+        json={
+            "priority_by_user_role": {"admin": 1, "employee": 5, "driver": 10},
+            "priority_by_team": {},
+            "service_zone": {
+                "enabled": True,
+                "pickup_bounds": {
+                    "min_latitude": 12.8,
+                    "max_latitude": 13.2,
+                    "min_longitude": 77.4,
+                    "max_longitude": 77.8,
+                },
+                "destination_bounds": {
+                    "min_latitude": 12.8,
+                    "max_latitude": 13.2,
+                    "min_longitude": 77.4,
+                    "max_longitude": 77.8,
+                },
+            },
+            "schedule": {
+                "min_lead_minutes": 15,
+                "max_days_ahead": 14,
+                "dispatch_cutoff_minutes_before_pickup": 10,
+            },
+            "cancellation": {"employee_cutoff_minutes_before_pickup": 5},
+            "women_safety_window": {
+                "enabled": False,
+                "start_local_time": "20:00",
+                "end_local_time": "06:00",
+                "timezone": "Asia/Kolkata",
+                "requires_scheduled_rides": False,
+                "apply_to_all_riders": False,
+            },
+        },
+    )
+    assert policy_response.status_code == 200, policy_response.text
+
+    blocked_ride_response = client.post(
+        f"{settings.API_V1_STR}/rides/request",
+        headers=employee_headers,
+        json={
+            "pickup": {
+                "address": "Mumbai pickup",
+                "latitude": 19.0760,
+                "longitude": 72.8777,
+            },
+            "destination": {
+                "address": "Mumbai office",
+                "latitude": 19.0820,
+                "longitude": 72.8890,
+            },
+            "scheduled_time": None,
+        },
+    )
+    assert blocked_ride_response.status_code == 400, blocked_ride_response.text
+    assert "outside the configured company service zone" in blocked_ride_response.json()["detail"].lower()
+
+
+def test_policy_cancellation_cutoff_blocks_late_cancel(client, auth_headers, seeded_data):
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+    employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
+
+    policy_response = client.put(
+        f"{settings.API_V1_STR}/admin/policy",
+        headers=admin_headers,
+        json={
+            "priority_by_user_role": {"admin": 1, "employee": 5, "driver": 10},
+            "priority_by_team": {},
+            "service_zone": {"enabled": False},
+            "schedule": {
+                "min_lead_minutes": 5,
+                "max_days_ahead": 14,
+                "dispatch_cutoff_minutes_before_pickup": 10,
+            },
+            "cancellation": {"employee_cutoff_minutes_before_pickup": 20},
+            "women_safety_window": {
+                "enabled": False,
+                "start_local_time": "20:00",
+                "end_local_time": "06:00",
+                "timezone": "Asia/Kolkata",
+                "requires_scheduled_rides": False,
+                "apply_to_all_riders": False,
+            },
+        },
+    )
+    assert policy_response.status_code == 200, policy_response.text
+
+    scheduled_time = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
+    ride_response = client.post(
+        f"{settings.API_V1_STR}/rides/request",
+        headers=employee_headers,
+        json=_ride_payload(scheduled_time=scheduled_time),
+    )
+    assert ride_response.status_code == 200, ride_response.text
+    ride = ride_response.json()
+
+    cancel_response = client.post(
+        f"{settings.API_V1_STR}/rides/{ride['id']}/cancel",
+        headers=employee_headers,
+    )
+    assert cancel_response.status_code == 400, cancel_response.text
+    assert "cancellation window has closed" in cancel_response.json()["detail"].lower()
+
+
+def test_admin_scope_viewer_blocks_dispatch_mutations(
+    client,
+    auth_headers,
+    seeded_data,
+    db_session_factory,
+):
+    db = db_session_factory()
+    try:
+        admin = db.scalar(select(User).where(User.email == seeded_data["users"]["admin_a"]))
+        assert admin is not None
+        admin.admin_scope = "viewer"
+        db.add(admin)
+        db.commit()
+    finally:
+        db.close()
+
+    employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+
+    ride_response = client.post(
+        f"{settings.API_V1_STR}/rides/request",
+        headers=employee_headers,
+        json=_ride_payload(),
+    )
+    assert ride_response.status_code == 200, ride_response.text
+    trip_id = ride_response.json()["trip_id"]
+    assert trip_id is not None
+
+    read_response = client.get(
+        f"{settings.API_V1_STR}/admin/trips",
+        headers=admin_headers,
+    )
+    assert read_response.status_code == 200, read_response.text
+
+    cancel_response = client.post(
+        f"{settings.API_V1_STR}/admin/trips/{trip_id}/cancel",
+        headers=admin_headers,
+        json={"reason": "Viewer should not dispatch"},
+    )
+    assert cancel_response.status_code == 403
+    assert "dispatch:write" in cancel_response.json()["detail"]
+
+
+def test_admin_scope_dispatcher_cannot_create_users(
+    client,
+    auth_headers,
+    seeded_data,
+    db_session_factory,
+):
+    db = db_session_factory()
+    try:
+        admin = db.scalar(select(User).where(User.email == seeded_data["users"]["admin_a"]))
+        assert admin is not None
+        admin.admin_scope = "dispatcher"
+        db.add(admin)
+        db.commit()
+    finally:
+        db.close()
+
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+    dashboard_response = client.get(
+        f"{settings.API_V1_STR}/admin/dashboard",
+        headers=admin_headers,
+    )
+    assert dashboard_response.status_code == 200, dashboard_response.text
+
+    create_user_response = client.post(
+        f"{settings.API_V1_STR}/admin/users",
+        headers=admin_headers,
+        json={
+            "name": "Scope Test",
+            "email": "scope-test@techcorp.com",
+            "password": seeded_data["password"],
+            "role": "employee",
+        },
+    )
+    assert create_user_response.status_code == 403
+    assert "users:manage" in create_user_response.json()["detail"]
+
+
+def test_admin_audit_export_json_and_csv(client, auth_headers, seeded_data):
+    employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+
+    ride_response = client.post(
+        f"{settings.API_V1_STR}/rides/request",
+        headers=employee_headers,
+        json=_ride_payload(),
+    )
+    assert ride_response.status_code == 200, ride_response.text
+
+    json_export = client.get(
+        f"{settings.API_V1_STR}/admin/audit/export?format=json&limit=30",
+        headers=admin_headers,
+    )
+    assert json_export.status_code == 200, json_export.text
+    payload = json_export.json()
+    assert payload["record_count"] >= 1
+    assert payload["signature"]
+    assert len(payload["signature"]) == 64
+    assert isinstance(payload["records"], list)
+
+    csv_export = client.get(
+        f"{settings.API_V1_STR}/admin/audit/export?format=csv&limit=30",
+        headers=admin_headers,
+    )
+    assert csv_export.status_code == 200, csv_export.text
+    assert csv_export.headers["content-type"].startswith("text/csv")
+    assert csv_export.headers.get("x-audit-signature")
+    assert "source,occurred_at,event_type" in csv_export.text
+
+
+def test_enterprise_identity_config_sso_and_scim_sync(
+    client,
+    auth_headers,
+    seeded_data,
+    db_session_factory,
+):
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+    scim_token = "token-stage4-sync-12345"
+
+    update_config = client.put(
+        f"{settings.API_V1_STR}/admin/identity/config",
+        headers=admin_headers,
+        json={
+            "sso": {
+                "enabled": True,
+                "provider": "oidc",
+                "issuer_url": "https://id.techcorp.com/oidc",
+                "sso_login_url": "https://id.techcorp.com/authorize",
+                "client_id": "techcorp-vanpool",
+                "redirect_uri": "https://vanpool.techcorp.com/auth/callback",
+            },
+            "scim": {
+                "enabled": True,
+                "base_url": "https://vanpool.techcorp.com/api/v1/auth/enterprise/scim/sync",
+                "provisioning_mode": "sync_hook",
+            },
+            "scim_bearer_token": scim_token,
+        },
+    )
+    assert update_config.status_code == 200, update_config.text
+    config_payload = update_config.json()
+    assert config_payload["sso"]["enabled"] is True
+    assert config_payload["scim"]["enabled"] is True
+    assert config_payload["scim"]["bearer_token_hint"] is not None
+
+    start_sso = client.post(
+        f"{settings.API_V1_STR}/auth/enterprise/sso/start",
+        json={
+            "company_domain": "techcorp.com",
+            "requested_role": "admin",
+            "relay_state": "portal:admin",
+        },
+    )
+    assert start_sso.status_code == 200, start_sso.text
+    sso_payload = start_sso.json()
+    assert sso_payload["configured"] is True
+    assert "id.techcorp.com/authorize" in (sso_payload.get("redirect_url") or "")
+
+    create_sync = client.post(
+        f"{settings.API_V1_STR}/auth/enterprise/scim/sync",
+        headers={"X-SCIM-Token": scim_token},
+        json={
+            "company_domain": "techcorp.com",
+            "operation": "create",
+            "external_user_id": "ext-1001",
+            "email": "scim.user@techcorp.com",
+            "name": "SCIM User",
+            "role": "employee",
+        },
+    )
+    assert create_sync.status_code == 200, create_sync.text
+    assert create_sync.json()["accepted"] is True
+
+    db = db_session_factory()
+    try:
+        synced_user = db.scalar(select(User).where(User.email == "scim.user@techcorp.com"))
+        assert synced_user is not None
+        assert synced_user.status == UserStatus.ACTIVE
+    finally:
+        db.close()
+
+    deactivate_sync = client.post(
+        f"{settings.API_V1_STR}/auth/enterprise/scim/sync",
+        headers={"X-SCIM-Token": scim_token},
+        json={
+            "company_domain": "techcorp.com",
+            "operation": "deactivate",
+            "external_user_id": "ext-1001",
+            "email": "scim.user@techcorp.com",
+            "role": "employee",
+        },
+    )
+    assert deactivate_sync.status_code == 200, deactivate_sync.text
+
+    db = db_session_factory()
+    try:
+        synced_user = db.scalar(select(User).where(User.email == "scim.user@techcorp.com"))
+        assert synced_user is not None
+        assert synced_user.status == UserStatus.INACTIVE
+    finally:
+        db.close()
 
 
 def test_driver_no_show_flow(client, auth_headers, seeded_data):

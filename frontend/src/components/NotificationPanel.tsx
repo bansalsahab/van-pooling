@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { api } from "../lib/api";
 import type { NotificationFeed, NotificationSummary } from "../lib/types";
@@ -10,6 +11,7 @@ interface NotificationCenterPanelProps {
   title?: string;
   eyebrow?: string;
   includeAlerts?: boolean;
+  enableIncidentActions?: boolean;
   initialNotifications: NotificationSummary[];
   initialUnreadCount: number;
   emptyMessage?: string;
@@ -20,6 +22,7 @@ export function NotificationCenterPanel({
   title = "Notification center",
   eyebrow = "Notifications",
   includeAlerts = false,
+  enableIncidentActions = false,
   initialNotifications,
   initialUnreadCount,
   emptyMessage = "No notifications yet. New assignments, alerts, and trip updates will appear here.",
@@ -27,6 +30,7 @@ export function NotificationCenterPanel({
 }: NotificationCenterPanelProps) {
   const notificationState = useNotificationFeedState({
     includeAlerts,
+    enableIncidentActions,
     initialNotifications,
     initialUnreadCount,
     onUnreadCountChange,
@@ -48,6 +52,7 @@ export function NotificationCenterPanel({
 interface NotificationRailProps {
   title?: string;
   includeAlerts?: boolean;
+  enableIncidentActions?: boolean;
   initialNotifications: NotificationSummary[];
   initialUnreadCount: number;
 }
@@ -55,11 +60,13 @@ interface NotificationRailProps {
 export function NotificationRail({
   title = "Notifications",
   includeAlerts = false,
+  enableIncidentActions = false,
   initialNotifications,
   initialUnreadCount,
 }: NotificationRailProps) {
   const notificationState = useNotificationFeedState({
     includeAlerts,
+    enableIncidentActions,
     initialNotifications,
     initialUnreadCount,
   });
@@ -79,22 +86,26 @@ export function NotificationRail({
 
 function useNotificationFeedState({
   includeAlerts,
+  enableIncidentActions,
   initialNotifications,
   initialUnreadCount,
   onUnreadCountChange,
 }: {
   includeAlerts: boolean;
+  enableIncidentActions: boolean;
   initialNotifications: NotificationSummary[];
   initialUnreadCount: number;
   onUnreadCountChange?: (count: number) => void;
 }) {
-  const { token } = useAuth();
+  const navigate = useNavigate();
+  const { token, user } = useAuth();
   const [feed, setFeed] = useState<NotificationFeed>({
     items: initialNotifications,
     unread_count: initialUnreadCount,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [activeNotificationId, setActiveNotificationId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -121,6 +132,7 @@ function useNotificationFeedState({
     }
     setLoading(true);
     setError(null);
+    setInfoMessage(null);
     try {
       const nextFeed = await api.getNotifications(token, {
         includeAlerts,
@@ -144,6 +156,7 @@ function useNotificationFeedState({
     }
     setActiveNotificationId(notificationId);
     setError(null);
+    setInfoMessage(null);
     try {
       const updated = await api.readNotification(token, notificationId);
       setFeed((current) => {
@@ -172,6 +185,7 @@ function useNotificationFeedState({
     }
     setActiveNotificationId("all");
     setError(null);
+    setInfoMessage(null);
     try {
       const updatedFeed = await api.readAllNotifications(token, {
         includeAlerts,
@@ -189,13 +203,73 @@ function useNotificationFeedState({
     }
   }
 
+  async function handleResolveIncident(notification: NotificationSummary) {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    setActiveNotificationId(`resolve:${notification.id}`);
+    setError(null);
+    setInfoMessage(null);
+    try {
+      await api.resolveAdminAlert(token, notification.id);
+      const resolvedAt = new Date().toISOString();
+      setFeed((current) => {
+        const wasUnread = current.items.some(
+          (item) => item.id === notification.id && !item.read_at,
+        );
+        return {
+          unread_count: wasUnread ? Math.max(0, current.unread_count - 1) : current.unread_count,
+          items: current.items.map((item) =>
+            item.id !== notification.id
+              ? item
+              : {
+                  ...item,
+                  status: "sent",
+                  sent_at: item.sent_at || resolvedAt,
+                  read_at: item.read_at || resolvedAt,
+                },
+          ),
+        };
+      });
+      setInfoMessage("Incident resolved and synced to the operations timeline.");
+    } catch (resolveError) {
+      setError(
+        resolveError instanceof Error
+          ? resolveError.message
+          : "Could not resolve incident.",
+      );
+    } finally {
+      setActiveNotificationId(null);
+    }
+  }
+
+  function openIncidentContext(notification: NotificationSummary) {
+    if (user?.role !== "admin" || !enableIncidentActions) {
+      return;
+    }
+    const entityType = (notification.entity_type || "").toLowerCase();
+    if (notification.trip_id || entityType === "trip") {
+      navigate("/admin/trips");
+      return;
+    }
+    if (notification.ride_id || entityType === "ride") {
+      navigate("/admin/requests");
+      return;
+    }
+    navigate("/admin");
+  }
+
   return {
     activeNotificationId,
+    enableIncidentActions: enableIncidentActions && user?.role === "admin",
     error,
     feed,
     handleMarkAllRead,
     handleMarkRead,
+    handleResolveIncident,
+    infoMessage,
     loading,
+    openIncidentContext,
     refresh,
   };
 }
@@ -219,11 +293,15 @@ function NotificationFeedCard({
 }) {
   const {
     activeNotificationId,
+    enableIncidentActions,
     error,
     feed,
     handleMarkAllRead,
     handleMarkRead,
+    handleResolveIncident,
+    infoMessage,
     loading,
+    openIncidentContext,
     refresh,
   } = state;
   const previewItems = variant === "rail" ? feed.items.slice(0, 3) : feed.items;
@@ -261,6 +339,7 @@ function NotificationFeedCard({
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {infoMessage && <div className="success-banner">{infoMessage}</div>}
 
       {previewItems.length === 0 ? (
         <p className="muted-copy">{loading ? "Loading notifications..." : emptyMessage}</p>
@@ -268,6 +347,11 @@ function NotificationFeedCard({
         <div className="stack compact">
           {previewItems.map((notification) => {
             const isUnread = !notification.read_at;
+            const isIncident = isIncidentNotification(notification);
+            const canResolveIncident =
+              enableIncidentActions &&
+              isIncident &&
+              notification.status === "pending";
             return (
               <article
                 className={`list-card compact-card notification-card ${isUnread ? "is-unread" : "is-read"}`}
@@ -280,6 +364,11 @@ function NotificationFeedCard({
                       {notification.kind && (
                         <span className="signal-pill">
                           {notification.kind.replaceAll("_", " ")}
+                        </span>
+                      )}
+                      {notification.breach_type && (
+                        <span className="signal-pill">
+                          {notification.breach_type.replaceAll("_", " ")}
                         </span>
                       )}
                       {notification.severity && (
@@ -310,6 +399,35 @@ function NotificationFeedCard({
                       </span>
                     )}
                   </div>
+                  {enableIncidentActions && isIncident && variant === "panel" && (
+                    <div className="button-row notification-action-row">
+                      <button
+                        className="ghost-button"
+                        onClick={() => openIncidentContext(notification)}
+                        type="button"
+                      >
+                        Open context
+                      </button>
+                      {canResolveIncident ? (
+                        <button
+                          className="secondary-button"
+                          disabled={activeNotificationId === `resolve:${notification.id}`}
+                          onClick={() => void handleResolveIncident(notification)}
+                          type="button"
+                        >
+                          {activeNotificationId === `resolve:${notification.id}`
+                            ? "Resolving..."
+                            : "Resolve incident"}
+                        </button>
+                      ) : (
+                        <span className="muted-copy">
+                          {isIncident && notification.status !== "pending"
+                            ? "Incident already resolved"
+                            : "Advisory only"}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="stack compact align-end">
                   {isUnread ? (
@@ -336,6 +454,10 @@ function NotificationFeedCard({
       )}
     </section>
   );
+}
+
+function isIncidentNotification(notification: NotificationSummary) {
+  return ["operational_alert", "sla_breach"].includes(notification.kind || "");
 }
 
 function buildNotificationTitle(notification: NotificationSummary) {
