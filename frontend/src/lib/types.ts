@@ -1,6 +1,12 @@
 export type UserRole = "employee" | "driver" | "admin";
 export type AdminScope = "supervisor" | "dispatcher" | "viewer" | "support";
 
+export interface NotificationPreferences {
+  push: boolean;
+  sms: boolean;
+  email: boolean;
+}
+
 export interface UserProfile {
   id: string;
   company_id?: string | null;
@@ -12,6 +18,8 @@ export interface UserProfile {
   admin_permissions?: string[];
   status: string;
   company_name?: string | null;
+  notification_preferences?: NotificationPreferences;
+  must_reset_password?: boolean;
   home_address?: string | null;
   home_latitude?: number | null;
   home_longitude?: number | null;
@@ -529,6 +537,33 @@ export interface AdminUserCreateInput {
   phone?: string;
   role: UserRole;
   admin_scope?: AdminScope;
+}
+
+export interface AdminUserUpdateInput {
+  name?: string;
+  phone?: string | null;
+  role?: UserRole;
+  status?: "active" | "inactive" | "suspended";
+  admin_scope?: AdminScope;
+}
+
+export interface AdminPasswordResetResponse {
+  user_id: string;
+  temporary_password: string;
+  must_reset_password: boolean;
+  message: string;
+}
+
+export interface UserProfileUpdateInput {
+  name?: string;
+  phone?: string | null;
+  notification_preferences?: NotificationPreferences;
+  home_address?: string | null;
+  home_latitude?: number | null;
+  home_longitude?: number | null;
+  default_destination_address?: string | null;
+  default_destination_latitude?: number | null;
+  default_destination_longitude?: number | null;
 }
 
 export interface AdminVanCreateInput {

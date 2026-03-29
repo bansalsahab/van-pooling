@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.database import get_db
 from app.models.user import User
+from app.schemas.common import MessageResponse
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
 from app.schemas.enterprise_auth import (
     EnterpriseSSOStartRequest,
@@ -12,8 +13,14 @@ from app.schemas.enterprise_auth import (
     SCIMSyncHookRequest,
     SCIMSyncHookResponse,
 )
-from app.schemas.user import UserProfile
-from app.services.auth_service import login_user, register_user, serialize_user
+from app.schemas.user import UserPasswordChangeRequest, UserProfile, UserProfileUpdate
+from app.services.auth_service import (
+    change_user_password,
+    login_user,
+    register_user,
+    serialize_user,
+    update_user_profile,
+)
 from app.services.enterprise_auth_service import process_scim_sync_hook, start_enterprise_sso
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -35,6 +42,27 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
 def me(current_user: User = Depends(get_current_user)) -> UserProfile:
     """Return the current authenticated user."""
     return serialize_user(current_user)
+
+
+@router.put("/me", response_model=UserProfile)
+def update_me(
+    payload: UserProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> UserProfile:
+    """Update profile settings for the signed-in user."""
+    return update_user_profile(db, current_user, payload)
+
+
+@router.post("/me/password", response_model=MessageResponse)
+def change_my_password(
+    payload: UserPasswordChangeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MessageResponse:
+    """Change password for the signed-in user."""
+    change_user_password(db, current_user, payload)
+    return MessageResponse(message="Password updated.")
 
 
 @router.post("/enterprise/sso/start", response_model=EnterpriseSSOStartResponse)

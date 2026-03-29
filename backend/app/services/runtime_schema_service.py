@@ -61,6 +61,10 @@ def ensure_user_schema() -> None:
         columns = {column["name"] for column in inspector.get_columns("users")}
         if "admin_scope" not in columns:
             connection.execute(text("ALTER TABLE users ADD COLUMN admin_scope VARCHAR(32)"))
+        if "must_reset_password" not in columns:
+            connection.execute(
+                text("ALTER TABLE users ADD COLUMN must_reset_password BOOLEAN DEFAULT 0 NOT NULL")
+            )
         connection.execute(
             text("CREATE INDEX IF NOT EXISTS ix_users_admin_scope ON users(admin_scope)")
         )

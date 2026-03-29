@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import Column, Enum, ForeignKey, String, TIMESTAMP, func
+from sqlalchemy import Boolean, Column, Enum, ForeignKey, String, TIMESTAMP, func
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -36,6 +36,7 @@ class User(Base):
         role: User role (employee/driver/admin)
         admin_scope: Sub-role for enterprise admin permissions
         status: Account status
+        must_reset_password: Whether the user must rotate credentials after temporary reset
         home_location: Home location (PostGIS point)
         home_address: Home address text
         default_destination: Default destination (PostGIS point)
@@ -66,6 +67,7 @@ class User(Base):
         default=UserStatus.ACTIVE,
         index=True,
     )
+    must_reset_password = Column(Boolean, nullable=False, default=False)
     
     # Geospatial fields (PostGIS)
     home_location = Column(GeographyOrText(geometry_type="POINT", srid=4326))

@@ -31,6 +31,8 @@ interface AuthContextValue {
     company_name?: string;
     requested_role?: UserProfile["role"];
   }) => Promise<void>;
+  refreshUser: () => Promise<void>;
+  setUserProfile: (profile: UserProfile) => void;
   logout: () => void;
 }
 
@@ -108,6 +110,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await handleAuthResult(result);
   }
 
+  async function refreshUser() {
+    if (!token) {
+      setUser(null);
+      return;
+    }
+    const profile = await api.me(token);
+    setUser(profile);
+  }
+
+  function setUserProfile(profile: UserProfile) {
+    setUser(profile);
+  }
+
   function logout() {
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
@@ -122,6 +137,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       login,
       register,
+      refreshUser,
+      setUserProfile,
       logout,
     }),
     [user, token, loading],

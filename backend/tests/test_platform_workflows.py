@@ -59,6 +59,113 @@ def test_auth_login_and_role_gate(client, seeded_data):
     assert "registered as driver" in mismatch.json()["detail"]
 
 
+def test_profile_update_and_password_change_flow(client, auth_headers, seeded_data):
+    employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
+
+    profile_update = client.put(
+        f"{settings.API_V1_STR}/auth/me",
+        headers=employee_headers,
+        json={
+            "name": "Employee Updated",
+            "phone": "+1 222 333 4444",
+            "notification_preferences": {"push": True, "sms": True, "email": False},
+            "home_address": "Indiranagar, Bengaluru",
+            "home_latitude": 12.9784,
+            "home_longitude": 77.6408,
+            "default_destination_address": "Whitefield, Bengaluru",
+            "default_destination_latitude": 12.9698,
+            "default_destination_longitude": 77.7500,
+        },
+    )
+    assert profile_update.status_code == 200, profile_update.text
+    updated = profile_update.json()
+    assert updated["name"] == "Employee Updated"
+    assert updated["phone"] == "+1 222 333 4444"
+    assert updated["notification_preferences"]["sms"] is True
+    assert updated["notification_preferences"]["email"] is False
+    assert updated["home_address"] == "Indiranagar, Bengaluru"
+    assert updated["default_destination_address"] == "Whitefield, Bengaluru"
+
+    password_change = client.post(
+        f"{settings.API_V1_STR}/auth/me/password",
+        headers=employee_headers,
+        json={
+            "current_password": seeded_data["password"],
+            "new_password": "password123NEW",
+        },
+    )
+    assert password_change.status_code == 200, password_change.text
+
+    old_login = client.post(
+        f"{settings.API_V1_STR}/auth/login",
+        json={
+            "email": seeded_data["users"]["employee_a"],
+            "password": seeded_data["password"],
+            "requested_role": "employee",
+        },
+    )
+    assert old_login.status_code == 401
+
+    new_login = client.post(
+        f"{settings.API_V1_STR}/auth/login",
+        json={
+            "email": seeded_data["users"]["employee_a"],
+            "password": "password123NEW",
+            "requested_role": "employee",
+        },
+    )
+    assert new_login.status_code == 200, new_login.text
+
+
+def test_admin_user_directory_update_and_temp_password_reset(
+    client,
+    auth_headers,
+    seeded_data,
+):
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+
+    users_response = client.get(
+        f"{settings.API_V1_STR}/admin/users",
+        headers=admin_headers,
+    )
+    assert users_response.status_code == 200, users_response.text
+    users = users_response.json()
+    employee = next(
+        item for item in users if item["email"] == seeded_data["users"]["employee_a"]
+    )
+
+    update_response = client.put(
+        f"{settings.API_V1_STR}/admin/users/{employee['id']}",
+        headers=admin_headers,
+        json={
+            "status": "active",
+            "role": "employee",
+        },
+    )
+    assert update_response.status_code == 200, update_response.text
+    assert update_response.json()["status"] == "active"
+
+    reset_response = client.post(
+        f"{settings.API_V1_STR}/admin/users/{employee['id']}/reset-password",
+        headers=admin_headers,
+    )
+    assert reset_response.status_code == 200, reset_response.text
+    reset_payload = reset_response.json()
+    assert reset_payload["must_reset_password"] is True
+    assert reset_payload["temporary_password"]
+
+    login_with_temp = client.post(
+        f"{settings.API_V1_STR}/auth/login",
+        json={
+            "email": seeded_data["users"]["employee_a"],
+            "password": reset_payload["temporary_password"],
+            "requested_role": "employee",
+        },
+    )
+    assert login_with_temp.status_code == 200, login_with_temp.text
+    assert login_with_temp.json()["user"]["must_reset_password"] is True
+
+
 def test_immediate_ride_lifecycle_end_to_end(client, auth_headers, seeded_data):
     employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
     driver_headers = auth_headers(seeded_data["users"]["driver_a1"], "driver")

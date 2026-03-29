@@ -42,6 +42,7 @@ export function AppLayout({
         <nav className="nav-links">
           {user?.role === "employee" && (
             <>
+              <p className="nav-section-title">Employee</p>
               <NavLink className={({ isActive }) => (isActive ? "active" : "")} to="/employee">
                 Ride Desk
               </NavLink>
@@ -51,14 +52,33 @@ export function AppLayout({
               >
                 Ride History
               </NavLink>
+              <NavLink
+                className={({ isActive }) => (isActive ? "active" : "")}
+                to="/employee/addresses"
+              >
+                Saved Locations
+              </NavLink>
+              <NavLink
+                className={({ isActive }) => (isActive ? "active" : "")}
+                to="/employee/schedule"
+              >
+                Recurring Rides
+              </NavLink>
+              <NavLink className={({ isActive }) => (isActive ? "active" : "")} to="/employee/passes">
+                Passes
+              </NavLink>
               <NavLink className={({ isActive }) => (isActive ? "active" : "")} to={notificationRoute}>
                 Notifications
-                {notificationUnreadCount > 0 ? <span className="nav-dot" aria-label="New notifications" /> : null}
+                {notificationUnreadCount > 0 ? (
+                  <span className="nav-dot" aria-label="New notifications" />
+                ) : null}
               </NavLink>
             </>
           )}
+
           {user?.role === "driver" && (
             <>
+              <p className="nav-section-title">Driver</p>
               <NavLink className={({ isActive }) => (isActive ? "active" : "")} to="/driver">
                 Driver Console
               </NavLink>
@@ -68,14 +88,27 @@ export function AppLayout({
               >
                 Trip Operations
               </NavLink>
+              <NavLink className={({ isActive }) => (isActive ? "active" : "")} to="/driver/schedule">
+                Shifts
+              </NavLink>
+              <NavLink
+                className={({ isActive }) => (isActive ? "active" : "")}
+                to="/driver/vehicle-checks"
+              >
+                Vehicle Checks
+              </NavLink>
               <NavLink className={({ isActive }) => (isActive ? "active" : "")} to={notificationRoute}>
                 Notifications
-                {notificationUnreadCount > 0 ? <span className="nav-dot" aria-label="New notifications" /> : null}
+                {notificationUnreadCount > 0 ? (
+                  <span className="nav-dot" aria-label="New notifications" />
+                ) : null}
               </NavLink>
             </>
           )}
+
           {user?.role === "admin" && (
             <>
+              <p className="nav-section-title">Admin</p>
               <NavLink className={({ isActive }) => (isActive ? "active" : "")} to="/admin">
                 Operations
               </NavLink>
@@ -106,9 +139,47 @@ export function AppLayout({
               >
                 Policy
               </NavLink>
+              <NavLink
+                className={({ isActive }) => (isActive ? "active" : "")}
+                to="/admin/users"
+              >
+                Users
+              </NavLink>
+              <NavLink
+                className={({ isActive }) => (isActive ? "active" : "")}
+                to="/admin/analytics"
+              >
+                Analytics
+              </NavLink>
+              <NavLink
+                className={({ isActive }) => (isActive ? "active" : "")}
+                to="/admin/zones"
+              >
+                Zones
+              </NavLink>
+              <NavLink
+                className={({ isActive }) => (isActive ? "active" : "")}
+                to="/admin/billing"
+              >
+                Billing
+              </NavLink>
               <NavLink className={({ isActive }) => (isActive ? "active" : "")} to={notificationRoute}>
                 Notifications
-                {notificationUnreadCount > 0 ? <span className="nav-dot" aria-label="New notifications" /> : null}
+                {notificationUnreadCount > 0 ? (
+                  <span className="nav-dot" aria-label="New notifications" />
+                ) : null}
+              </NavLink>
+            </>
+          )}
+
+          {user && (
+            <>
+              <p className="nav-section-title">Account</p>
+              <NavLink className={({ isActive }) => (isActive ? "active" : "")} to="/profile">
+                Profile
+              </NavLink>
+              <NavLink className={({ isActive }) => (isActive ? "active" : "")} to="/help">
+                Help
               </NavLink>
             </>
           )}
@@ -119,7 +190,7 @@ export function AppLayout({
             <strong>{user?.name}</strong>
             <span>
               {user?.role}
-              {user?.role === "admin" && user?.admin_scope ? ` · ${user.admin_scope}` : ""}
+              {user?.role === "admin" && user?.admin_scope ? ` - ${user.admin_scope}` : ""}
             </span>
           </div>
           <button className="ghost-button" onClick={logout}>

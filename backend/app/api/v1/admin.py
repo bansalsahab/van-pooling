@@ -26,12 +26,20 @@ from app.schemas.policy import (
 from app.schemas.ride_request import AdminPendingRideSummary
 from app.schemas.sla import IncidentTimelineItem, SLASnapshotSummary
 from app.schemas.trip import TripSummary
-from app.schemas.user import AdminUserCreate, UserSummary
+from app.schemas.user import (
+    AdminPasswordResetResponse,
+    AdminUserCreate,
+    AdminUserUpdate,
+    UserSummary,
+)
 from app.schemas.van import AdminVanCreate, VanSummary
 from app.services.admin_service import (
     create_company_user,
     create_company_van,
     list_company_drivers,
+    list_company_users,
+    reset_company_user_password,
+    update_company_user,
 )
 from app.services.audit_service import (
     build_company_audit_export,
@@ -193,6 +201,17 @@ def drivers(
     return list_company_drivers(db, current_user.company_id)
 
 
+@router.get("/users", response_model=list[UserSummary])
+def users(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_admin_permissions(AdminPermission.DASHBOARD_READ)
+    ),
+) -> list[UserSummary]:
+    """Return all tenant users for the admin directory."""
+    return list_company_users(db, current_user.company_id)
+
+
 @router.get("/trips", response_model=list[TripSummary])
 def trips(
     db: Session = Depends(get_db),
@@ -296,6 +315,31 @@ def create_user(
 ) -> UserSummary:
     """Create a user for the admin's company."""
     return create_company_user(db, current_user.company_id, payload)
+
+
+@router.put("/users/{user_id}", response_model=UserSummary)
+def update_user(
+    user_id: UUID,
+    payload: AdminUserUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_admin_permissions(AdminPermission.USERS_MANAGE)
+    ),
+) -> UserSummary:
+    """Update a user in the admin's company directory."""
+    return update_company_user(db, current_user.company_id, user_id, payload)
+
+
+@router.post("/users/{user_id}/reset-password", response_model=AdminPasswordResetResponse)
+def reset_user_password(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_admin_permissions(AdminPermission.USERS_MANAGE)
+    ),
+) -> AdminPasswordResetResponse:
+    """Issue a temporary password and enforce a post-login password reset."""
+    return reset_company_user_password(db, current_user.company_id, user_id)
 
 
 @router.post("/vans", response_model=VanSummary)

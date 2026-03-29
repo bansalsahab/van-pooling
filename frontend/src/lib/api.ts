@@ -1,9 +1,11 @@
 import type {
   AlertSummary,
+  AdminPasswordResetResponse,
   AdminDashboardSummary,
   AdminKPISummary,
   AdminPendingRideSummary,
   AdminUserCreateInput,
+  AdminUserUpdateInput,
   AdminVanCreateInput,
   AIInsight,
   AuditExportResponse,
@@ -31,6 +33,7 @@ import type {
   SLASnapshotSummary,
   TripSummary,
   KPIWindow,
+  UserProfileUpdateInput,
   UserProfile,
   VanSummary,
 } from "./types";
@@ -166,6 +169,23 @@ export const api = {
   },
   me(token: string) {
     return request<UserProfile>("/auth/me", { token });
+  },
+  updateProfile(token: string, payload: UserProfileUpdateInput) {
+    return request<UserProfile>("/auth/me", {
+      method: "PUT",
+      token,
+      body: payload,
+    });
+  },
+  changePassword(token: string, currentPassword: string, newPassword: string) {
+    return request<{ message: string }>("/auth/me/password", {
+      method: "POST",
+      token,
+      body: {
+        current_password: currentPassword,
+        new_password: newPassword,
+      },
+    });
   },
   getRideHistory(token: string) {
     return request<RideSummary[]>("/rides/history", { token });
@@ -313,6 +333,9 @@ export const api = {
   getAdminDrivers(token: string) {
     return request<UserProfile[]>("/admin/drivers", { token });
   },
+  getAdminUsers(token: string) {
+    return request<UserProfile[]>("/admin/users", { token });
+  },
   getAdminTrips(token: string) {
     return request<TripSummary[]>("/admin/trips", { token });
   },
@@ -413,6 +436,19 @@ export const api = {
       method: "POST",
       token,
       body: payload,
+    });
+  },
+  updateAdminUser(token: string, userId: string, payload: AdminUserUpdateInput) {
+    return request<UserProfile>(`/admin/users/${userId}`, {
+      method: "PUT",
+      token,
+      body: payload,
+    });
+  },
+  resetAdminUserPassword(token: string, userId: string) {
+    return request<AdminPasswordResetResponse>(`/admin/users/${userId}/reset-password`, {
+      method: "POST",
+      token,
     });
   },
   createAdminVan(token: string, payload: AdminVanCreateInput) {

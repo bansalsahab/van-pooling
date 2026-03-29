@@ -23,6 +23,7 @@ CREATE TABLE users (
     phone VARCHAR(20),
     role user_role NOT NULL,
     status user_status DEFAULT 'active',
+    must_reset_password BOOLEAN DEFAULT FALSE NOT NULL,
     home_location GEOGRAPHY(POINT, 4326),
     home_address TEXT,
     default_destination GEOGRAPHY(POINT, 4326),

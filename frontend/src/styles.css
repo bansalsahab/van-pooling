@@ -424,6 +424,15 @@ input::placeholder {
   padding-right: 0.5rem;
 }
 
+.nav-section-title {
+  margin: 0.8rem 0 0.1rem;
+  padding: 0 0.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.68rem;
+  color: #7f9db8;
+}
+
 .nav-links::-webkit-scrollbar {
   width: 4px;
 }
@@ -1120,6 +1129,7 @@ td {
   display: flex;
   gap: 0.4rem;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .inline-link-button {

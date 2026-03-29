@@ -10,17 +10,36 @@ from app.core.rbac import (
     admin_scope_value,
     parse_admin_scope,
 )
+from app.core.config import settings
 from app.core.security import (
     create_access_token,
     create_refresh_token,
     get_password_hash,
     verify_password,
 )
-from app.geo import parse_point
+from app.geo import parse_point, point_value
 from app.models.company import Company
 from app.models.user import User, UserRole, UserStatus
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
-from app.schemas.user import UserProfile
+from app.schemas.user import (
+    NotificationPreferences,
+    UserPasswordChangeRequest,
+    UserProfile,
+    UserProfileUpdate,
+)
+
+
+def _normalize_notification_preferences(
+    value: dict[str, object] | None,
+) -> NotificationPreferences:
+    defaults = {"push": True, "sms": False, "email": True}
+    if not value:
+        return NotificationPreferences(**defaults)
+    merged = {**defaults}
+    for key in ("push", "sms", "email"):
+        if key in value:
+            merged[key] = bool(value[key])
+    return NotificationPreferences(**merged)
 
 
 def serialize_user(user: User) -> UserProfile:
@@ -43,6 +62,12 @@ def serialize_user(user: User) -> UserProfile:
         admin_permissions=admin_permissions,
         status=user.status.value,
         company_name=user.company.name if user.company else None,
+        notification_preferences=_normalize_notification_preferences(
+            user.notification_preferences
+            if isinstance(user.notification_preferences, dict)
+            else None
+        ),
+        must_reset_password=bool(user.must_reset_password),
         home_address=user.home_address,
         home_latitude=home_coordinates[0] if home_coordinates else None,
         home_longitude=home_coordinates[1] if home_coordinates else None,
@@ -175,3 +200,91 @@ def register_user(db: Session, payload: RegisterRequest) -> TokenResponse:
     db.refresh(user)
     db.refresh(company)
     return build_token_response(user)
+
+
+def update_user_profile(
+    db: Session,
+    user: User,
+    payload: UserProfileUpdate,
+) -> UserProfile:
+    """Update profile fields for the authenticated user."""
+    fields = payload.model_fields_set
+    if "name" in fields and payload.name is not None:
+        user.name = payload.name.strip()
+    if "phone" in fields:
+        user.phone = payload.phone.strip() if payload.phone else None
+    if "notification_preferences" in fields and payload.notification_preferences is not None:
+        user.notification_preferences = payload.notification_preferences.model_dump()
+    if "home_address" in fields:
+        user.home_address = payload.home_address.strip() if payload.home_address else None
+    if {"home_latitude", "home_longitude"} & fields:
+        if (payload.home_latitude is None) != (payload.home_longitude is None):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="home_latitude and home_longitude must be set together.",
+            )
+        if payload.home_latitude is not None and payload.home_longitude is not None:
+            user.home_location = point_value(
+                payload.home_longitude,
+                payload.home_latitude,
+                sqlite_mode=settings.is_sqlite,
+            )
+        elif payload.home_latitude is None and payload.home_longitude is None:
+            user.home_location = None
+    if "default_destination_address" in fields:
+        user.default_destination_address = (
+            payload.default_destination_address.strip()
+            if payload.default_destination_address
+            else None
+        )
+    if {"default_destination_latitude", "default_destination_longitude"} & fields:
+        if (payload.default_destination_latitude is None) != (
+            payload.default_destination_longitude is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "default_destination_latitude and "
+                    "default_destination_longitude must be set together."
+                ),
+            )
+        if (
+            payload.default_destination_latitude is not None
+            and payload.default_destination_longitude is not None
+        ):
+            user.default_destination = point_value(
+                payload.default_destination_longitude,
+                payload.default_destination_latitude,
+                sqlite_mode=settings.is_sqlite,
+            )
+        elif (
+            payload.default_destination_latitude is None
+            and payload.default_destination_longitude is None
+        ):
+            user.default_destination = None
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return serialize_user(user)
+
+
+def change_user_password(
+    db: Session,
+    user: User,
+    payload: UserPasswordChangeRequest,
+) -> None:
+    """Rotate password for the authenticated user."""
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
+        )
+    if verify_password(payload.new_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from the current password.",
+        )
+    user.password_hash = get_password_hash(payload.new_password)
+    user.must_reset_password = False
+    db.add(user)
+    db.commit()
