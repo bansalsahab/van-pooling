@@ -25,16 +25,18 @@ export function MetricPanel({
   value,
   detail,
   onClick,
+  className = "",
 }: {
   label: string;
   value: string;
   detail: string;
   onClick?: () => void;
+  className?: string;
 }) {
-  const className = `metric-panel ${onClick ? "metric-panel-clickable" : ""}`;
+  const panelClassName = `metric-panel ${onClick ? "metric-panel-clickable" : ""} ${className}`.trim();
   if (onClick) {
     return (
-      <button className={className} onClick={onClick} type="button">
+      <button className={panelClassName} onClick={onClick} type="button">
         <span>{label}</span>
         <strong>{value}</strong>
         <p>{detail}</p>
@@ -43,7 +45,7 @@ export function MetricPanel({
   }
 
   return (
-    <section className={className}>
+    <section className={panelClassName}>
       <span>{label}</span>
       <strong>{value}</strong>
       <p>{detail}</p>
@@ -141,7 +143,11 @@ export function LiveStatusBadge({
       <span className="live-dot" />
       <strong>{label}</strong>
       <span className={`quality-pill ${quality}`}>{quality}</span>
-      {typeof lagSeconds === "number" && <span>{`${lagSeconds}s lag`}</span>}
+      {state === "live" && typeof lagSeconds === "number" ? (
+        <span>{`updates every ${Math.max(5, Math.round(lagSeconds))}s`}</span>
+      ) : (
+        <span>{state === "live" ? "stream active" : "waiting for reconnect"}</span>
+      )}
       <span>{lastUpdatedAt ? `Updated ${formatTimestamp(lastUpdatedAt)}` : "Waiting"}</span>
     </div>
   );
@@ -278,6 +284,11 @@ export function LiveEventsPanel({
   events: LiveOperationalEvent[];
   title?: string;
 }) {
+  const timelineEvents =
+    events.length > 0
+      ? events
+      : buildIdleTimelineEvents();
+
   return (
     <section className="panel">
       <div className="panel-header">
@@ -286,17 +297,16 @@ export function LiveEventsPanel({
           <h3>{title}</h3>
         </div>
       </div>
-      {events.length === 0 ? (
-        <p className="muted-copy">
-          New live events will appear here as rides, trips, vans, alerts, and notifications change.
-        </p>
-      ) : (
-        <div className="stack compact">
-          {events.map((event) => (
+      <div className="stack compact">
+        {timelineEvents.map((event, index) => {
+          const tone = deriveEventTone(event);
+          const toneClass = `tone-${tone}`;
+          return (
             <article
-              className="list-card compact-card event-card"
-              key={`${event.sequence ?? "event"}-${event.event}-${event.payload.entity_id ?? "unknown"}`}
+              className={`list-card compact-card event-card ${toneClass}`}
+              key={`${event.sequence ?? `idle-${index}`}-${event.event}-${event.payload.entity_id ?? "unknown"}`}
             >
+              <span className={`event-dot ${toneClass}`} />
               <div>
                 <strong>{formatEventHeadline(event)}</strong>
                 <p>{formatEventSummary(event)}</p>
@@ -306,9 +316,9 @@ export function LiveEventsPanel({
                 <span className="muted-copy">{formatTimestamp(event.payload.generated_at)}</span>
               </div>
             </article>
-          ))}
-        </div>
-      )}
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -358,4 +368,61 @@ function formatEventSummary(event: LiveOperationalEvent) {
   }
 
   return `${event.payload.entity_type} ${event.payload.action}.`;
+}
+
+function deriveEventTone(event: LiveOperationalEvent): "success" | "warning" | "info" | "alert" {
+  const action = (event.payload.action || "").toLowerCase();
+  const eventName = (event.event || "").toLowerCase();
+  if (action.includes("resolved") || action.includes("completed") || action.includes("dropped")) {
+    return "success";
+  }
+  if (eventName.includes("alert") || action.includes("failed") || action.includes("cancel")) {
+    return "alert";
+  }
+  if (action.includes("delayed") || action.includes("stale") || action.includes("warning")) {
+    return "warning";
+  }
+  return "info";
+}
+
+function buildIdleTimelineEvents(): LiveOperationalEvent[] {
+  const baseTime = Date.now();
+  return [
+    {
+      event: "driver.updated",
+      sequence: 1,
+      payload: {
+        entity_type: "driver",
+        entity_id: "driver-live",
+        action: "status_checked",
+        role: "driver",
+        generated_at: new Date(baseTime - 60 * 1000).toISOString(),
+        changed_fields: ["heartbeat"],
+      },
+    },
+    {
+      event: "trip.updated",
+      sequence: 2,
+      payload: {
+        entity_type: "trip",
+        entity_id: "trip-placeholder",
+        action: "dispatch_waiting",
+        role: "driver",
+        generated_at: new Date(baseTime - 2 * 60 * 1000).toISOString(),
+        changed_fields: ["status"],
+      },
+    },
+    {
+      event: "notification.updated",
+      sequence: 3,
+      payload: {
+        entity_type: "notification",
+        entity_id: "notif-placeholder",
+        action: "info_synced",
+        role: "driver",
+        generated_at: new Date(baseTime - 3 * 60 * 1000).toISOString(),
+        changed_fields: ["delivered"],
+      },
+    },
+  ];
 }

@@ -818,6 +818,8 @@ export interface MapMarkerSpec {
   title: string;
   subtitle?: string;
   tone?: "van" | "pickup" | "destination" | "warning" | "default";
+  markerLabel?: string;
+  badgeCount?: number;
 }
 
 export interface MapPolylineSpec {

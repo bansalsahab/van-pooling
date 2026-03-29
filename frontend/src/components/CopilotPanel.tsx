@@ -22,10 +22,13 @@ export function CopilotPanel({
   onAsk: (question: string) => Promise<void>;
 }) {
   const [question, setQuestion] = useState("");
+  const [showContextUsed, setShowContextUsed] = useState(false);
+  const questionTrimmed = question.trim();
+  const questionCharacterCount = question.length;
 
   async function handleAsk(event: React.FormEvent) {
     event.preventDefault();
-    const trimmed = question.trim();
+    const trimmed = questionTrimmed;
     if (!trimmed) {
       return;
     }
@@ -66,6 +69,18 @@ export function CopilotPanel({
             <div>
               <span className="eyebrow">AI Health Score</span>
               <strong>{brief.health_score}/100</strong>
+              <div
+                aria-hidden="true"
+                className={`copilot-health-bar ${
+                  brief.health_score >= 75
+                    ? "good"
+                    : brief.health_score >= 45
+                      ? "warning"
+                      : "critical"
+                }`}
+              >
+                <span style={{ width: `${Math.max(0, Math.min(100, brief.health_score))}%` }} />
+              </div>
             </div>
             <span className={`priority-pill ${brief.confidence}`}>
               confidence: {brief.confidence}
@@ -80,14 +95,22 @@ export function CopilotPanel({
           </div>
           {brief.source_signals.length > 0 && (
             <div className="stack compact">
-              <span className="eyebrow">Grounding Signals</span>
-              <div className="signal-row">
-                {brief.source_signals.map((signal) => (
-                  <span className="signal-pill" key={signal}>
-                    {signal}
-                  </span>
-                ))}
-              </div>
+              <button
+                className="ghost-button context-toggle"
+                onClick={() => setShowContextUsed((current) => !current)}
+                type="button"
+              >
+                Context used {showContextUsed ? "v" : ">"}
+              </button>
+              {showContextUsed && (
+                <div className="signal-row">
+                  {brief.source_signals.map((signal) => (
+                    <span className="signal-pill" key={signal}>
+                      {signal}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {brief.quick_prompts.length > 0 && (
@@ -96,13 +119,14 @@ export function CopilotPanel({
               <div className="button-row">
                 {brief.quick_prompts.map((prompt) => (
                   <button
-                    className="ghost-button quick-prompt"
+                    className="ghost-button quick-prompt-chip"
                     disabled={asking}
                     key={prompt}
                     onClick={() => void handleQuickAsk(prompt)}
                     type="button"
                   >
-                    {prompt}
+                    <span>{prompt}</span>
+                    <span aria-hidden="true">{">"}</span>
                   </button>
                 ))}
               </div>
@@ -145,7 +169,10 @@ export function CopilotPanel({
             placeholder="What should I do next to reduce ETA risk?"
           />
         </label>
-        <button className="primary-button" disabled={asking} type="submit">
+        <div className="copilot-ask-footer">
+          <span className="muted-copy">{questionCharacterCount}/500</span>
+        </div>
+        <button className="primary-button" disabled={asking || !questionTrimmed} type="submit">
           {asking ? "Thinking..." : "Ask copilot"}
         </button>
       </form>
@@ -154,7 +181,10 @@ export function CopilotPanel({
         <div className="stack compact">
           <div className="list-card">
             <strong>Copilot answer</strong>
-            <p>{reply.answer}</p>
+            <p className="copilot-answer-lead">{extractLeadSentence(reply.answer)}</p>
+            {extractRemainingAnswer(reply.answer) && (
+              <p>{extractRemainingAnswer(reply.answer)}</p>
+            )}
           </div>
           {reply.source_signals.length > 0 && (
             <div className="signal-row">
@@ -177,4 +207,22 @@ export function CopilotPanel({
       )}
     </section>
   );
+}
+
+function extractLeadSentence(answer: string) {
+  const trimmed = answer.trim();
+  const match = trimmed.match(/^[^.!?]+[.!?]/);
+  if (!match) {
+    return trimmed;
+  }
+  return match[0];
+}
+
+function extractRemainingAnswer(answer: string) {
+  const trimmed = answer.trim();
+  const lead = extractLeadSentence(trimmed);
+  if (lead.length >= trimmed.length) {
+    return "";
+  }
+  return trimmed.slice(lead.length).trim();
 }

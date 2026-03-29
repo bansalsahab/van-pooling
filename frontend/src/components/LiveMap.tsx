@@ -9,14 +9,18 @@ export function LiveMap({
   markers,
   polylines = [],
   emptyMessage = "Map data will appear once live coordinates are available.",
+  mapUnavailableMessage = null,
   height = 360,
+  allowEmptyMap = false,
 }: {
   title: string;
   subtitle: string;
   markers: MapMarkerSpec[];
   polylines?: MapPolylineSpec[];
   emptyMessage?: string;
+  mapUnavailableMessage?: string | null;
   height?: number;
+  allowEmptyMap?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -58,6 +62,24 @@ export function LiveMap({
       });
       setIsReady(true);
       setError(null);
+
+      if (markerPayload.length === 0 && allowEmptyMap && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            if (!cancelled && mapRef.current) {
+              mapRef.current.setCenter({
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+              });
+              mapRef.current.setZoom(14);
+            }
+          },
+          () => {
+            // Keep default center when geolocation is unavailable.
+          },
+          { enableHighAccuracy: true, maximumAge: 8000, timeout: 5000 },
+        );
+      }
     }
 
     void setupMap();
@@ -83,6 +105,9 @@ export function LiveMap({
 
     if (markerPayload.length === 0 && polylinePayload.length === 0) {
       viewportSignatureRef.current = null;
+      if (allowEmptyMap) {
+        return;
+      }
       return;
     }
 
@@ -97,16 +122,11 @@ export function LiveMap({
       const mapMarker = new google.maps.Marker({
         map: mapRef.current,
         position: { lat: marker.latitude, lng: marker.longitude },
-        title: marker.title,
-        label: marker.title.slice(0, 1).toUpperCase(),
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          fillColor: markerColor(marker.tone),
-          fillOpacity: 1,
-          strokeColor: "#ffffff",
-          strokeWeight: 2,
-          scale: 10,
-        },
+        title:
+          typeof marker.badgeCount === "number"
+            ? `${marker.title} (${marker.badgeCount} passenger${marker.badgeCount === 1 ? "" : "s"})`
+            : marker.title,
+        icon: buildMarkerIcon(google, marker),
       });
       overlaysRef.current.push(mapMarker);
       bounds.extend(mapMarker.getPosition() as any);
@@ -146,6 +166,29 @@ export function LiveMap({
     }
   }, [isReady, markerPayload, polylinePayload, viewportVersion]);
 
+  function handleRecenter() {
+    if (markerPayload.length > 0 || polylinePayload.length > 0) {
+      setViewportVersion((current) => current + 1);
+      return;
+    }
+    if (!mapRef.current || !navigator.geolocation) {
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        mapRef.current?.setCenter({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        });
+        mapRef.current?.setZoom(14);
+      },
+      () => {
+        // Ignore recenter failures to avoid blocking map usage.
+      },
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 8000 },
+    );
+  }
+
   return (
     <section className="panel map-panel">
       <div className="panel-header">
@@ -154,19 +197,21 @@ export function LiveMap({
           <h3>{title}</h3>
           <p>{subtitle}</p>
         </div>
-        {(markers.length > 0 || polylines.length > 0) && (
+        {(markers.length > 0 || polylines.length > 0 || allowEmptyMap) && (
           <button
             className="ghost-button"
-            onClick={() => setViewportVersion((current) => current + 1)}
+            onClick={handleRecenter}
             type="button"
           >
-            Reset view
+            Recenter
           </button>
         )}
       </div>
       {error ? (
         <div className="map-empty"><div className="map-empty-content">{error}</div></div>
-      ) : markers.length === 0 && polylines.length === 0 ? (
+      ) : mapUnavailableMessage ? (
+        <div className="map-empty"><div className="map-empty-content">{mapUnavailableMessage}</div></div>
+      ) : markers.length === 0 && polylines.length === 0 && !allowEmptyMap ? (
         <div className="map-empty"><div className="map-empty-content">{emptyMessage}</div></div>
       ) : (
         <div
@@ -192,4 +237,21 @@ function markerColor(tone?: MapMarkerSpec["tone"]) {
     default:
       return "#b7c7d9";
   }
+}
+
+function buildMarkerIcon(google: any, marker: MapMarkerSpec) {
+  const label = (marker.markerLabel || marker.title.slice(0, 1)).toUpperCase();
+  const badgeMarkup =
+    typeof marker.badgeCount === "number"
+      ? `<circle cx="34" cy="10" r="8" fill="#0b1826" stroke="#ffffff" stroke-width="1.5" /><text x="34" y="13" text-anchor="middle" font-size="9" font-family="Segoe UI, Arial, sans-serif" fill="#ffffff">${marker.badgeCount}</text>`
+      : "";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44"><circle cx="18" cy="22" r="14" fill="${markerColor(
+    marker.tone,
+  )}" stroke="#ffffff" stroke-width="2" /><text x="18" y="26" text-anchor="middle" font-size="12" font-weight="700" font-family="Segoe UI, Arial, sans-serif" fill="#07111f">${label}</text>${badgeMarkup}</svg>`;
+
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: new google.maps.Size(44, 44),
+    anchor: new google.maps.Point(18, 22),
+  };
 }

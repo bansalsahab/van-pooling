@@ -291,6 +291,7 @@ function NotificationFeedCard({
   state: ReturnType<typeof useNotificationFeedState>;
   variant: "panel" | "rail";
 }) {
+  const [activeFilter, setActiveFilter] = useState<"all" | "unread" | "trips" | "alerts">("all");
   const {
     activeNotificationId,
     enableIncidentActions,
@@ -304,7 +305,10 @@ function NotificationFeedCard({
     openIncidentContext,
     refresh,
   } = state;
-  const previewItems = variant === "rail" ? feed.items.slice(0, 3) : feed.items;
+  const filterPredicate = getNotificationFilterPredicate(activeFilter);
+  const filteredItems = feed.items.filter(filterPredicate);
+  const previewItems =
+    variant === "rail" ? filteredItems.slice(0, 3) : filteredItems;
 
   return (
     <section className={`panel notification-panel ${variant === "rail" ? "notification-rail" : ""}`}>
@@ -340,9 +344,38 @@ function NotificationFeedCard({
 
       {error && <div className="error-banner">{error}</div>}
       {infoMessage && <div className="success-banner">{infoMessage}</div>}
+      {variant === "panel" && (
+        <div className="notification-filter-tabs">
+          {[
+            { key: "all", label: "All" },
+            { key: "unread", label: "Unread" },
+            { key: "trips", label: "Trips" },
+            { key: "alerts", label: "Alerts" },
+          ].map((item) => (
+            <button
+              className={`ghost-button ${activeFilter === item.key ? "active" : ""}`}
+              key={item.key}
+              onClick={() =>
+                setActiveFilter(item.key as "all" | "unread" | "trips" | "alerts")
+              }
+              type="button"
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {previewItems.length === 0 ? (
-        <p className="muted-copy">{loading ? "Loading notifications..." : emptyMessage}</p>
+        <div className="notification-empty-state">
+          <span aria-hidden="true">bell</span>
+          <strong>{loading ? "Loading notifications..." : "All caught up"}</strong>
+          <p className="muted-copy">
+            {loading
+              ? "Fetching the latest trip and dispatch updates."
+              : emptyMessage}
+          </p>
+        </div>
       ) : (
         <div className="stack compact">
           {previewItems.map((notification) => {
@@ -359,7 +392,12 @@ function NotificationFeedCard({
               >
                 <div className="notification-card-main">
                   <div className="notification-card-header">
-                    <strong>{notification.title || buildNotificationTitle(notification)}</strong>
+                    <strong>
+                      <span className="notification-type-icon" aria-hidden="true">
+                        {notificationTypeIcon(notification)}
+                      </span>
+                      {notification.title || buildNotificationTitle(notification)}
+                    </strong>
                     <div className="signal-row">
                       {notification.kind && (
                         <span className="signal-pill">
@@ -390,12 +428,12 @@ function NotificationFeedCard({
                     </span>
                     {notification.trip_id && (
                       <span className="muted-copy">
-                        Trip {notification.trip_id.slice(0, 8)}
+                        Trip #{notification.trip_id.slice(0, 4).toUpperCase()}
                       </span>
                     )}
                     {notification.ride_id && (
                       <span className="muted-copy">
-                        Ride {notification.ride_id.slice(0, 8)}
+                        Ride #{notification.ride_id.slice(0, 4).toUpperCase()}
                       </span>
                     )}
                   </div>
@@ -468,6 +506,36 @@ function buildNotificationTitle(notification: NotificationSummary) {
     return `${notification.type} update`;
   }
   return "Notification";
+}
+
+function getNotificationFilterPredicate(filter: "all" | "unread" | "trips" | "alerts") {
+  if (filter === "unread") {
+    return (notification: NotificationSummary) => !notification.read_at;
+  }
+  if (filter === "trips") {
+    return (notification: NotificationSummary) =>
+      Boolean(notification.trip_id || notification.ride_id);
+  }
+  if (filter === "alerts") {
+    return (notification: NotificationSummary) =>
+      ["operational_alert", "sla_breach"].includes(notification.kind || "") ||
+      (notification.severity || "").length > 0;
+  }
+  return () => true;
+}
+
+function notificationTypeIcon(notification: NotificationSummary) {
+  const kind = (notification.kind || "").toLowerCase();
+  if (kind.includes("alert") || kind.includes("breach")) {
+    return "warning";
+  }
+  if ((notification.trip_id || notification.ride_id) && kind.includes("trip")) {
+    return "clock";
+  }
+  if (notification.trip_id || notification.ride_id) {
+    return "van";
+  }
+  return "info";
 }
 
 function formatTimestamp(value: string) {

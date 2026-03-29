@@ -113,13 +113,48 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
   const trip = snapshot?.data.active_trip ?? fallbackTrip;
   const unreadNotifications = snapshot?.data.notifications_unread_count ?? 0;
   const insights = snapshot?.insights ?? fallbackInsights;
-  const mapMarkers = buildDriverMapMarkers(dashboard, trip);
-  const mapPolylines = buildRoutePolylines(trip?.route);
+  const mapMarkers = buildDriverMapMarkers(
+    dashboard,
+    trip,
+    resolveManualCoordinates(location, dashboard),
+  );
+  const mapPolylines = buildRoutePolylines(trip?.route, mapMarkers);
   const tripAccepted = Boolean(trip?.accepted_at);
   const tripStarted = Boolean(trip?.started_at);
   const upcomingScheduledWork = dashboard?.upcoming_scheduled_work ?? [];
   const isBrowserOnline =
     typeof navigator === "undefined" ? true : navigator.onLine;
+  const currentVanStatus = dashboard?.van?.status || "offline";
+  const firstPendingStop = trip?.route?.pickup_sequence?.find((stop) =>
+    ["assigned", "notified"].includes(stop.status || ""),
+  );
+  const hasDriverCoordinates = Boolean(
+    resolveManualCoordinates(location, dashboard) ||
+      (typeof dashboard?.van?.latitude === "number" &&
+        typeof dashboard?.van?.longitude === "number"),
+  );
+  const mapUnavailableMessage =
+    !hasDriverCoordinates && sharingMode === "off"
+      ? "Map unavailable - GPS not sharing. Enable GPS sharing to start live tracking."
+      : null;
+  const nextActionMessage = trip
+    ? !tripAccepted
+      ? "Accept your assigned trip to start dispatch flow."
+      : !tripStarted
+        ? firstPendingStop?.pickup_address
+          ? `Drive to Stop 1 - ${firstPendingStop.pickup_address}`
+          : "Start trip and head to the first pickup stop."
+        : "Continue active pickups and complete rider dropoffs in sequence."
+    : "Standing by for dispatch. Keep GPS sharing active for new assignments.";
+  const stopCount = trip?.route?.pickup_sequence?.length ?? 0;
+  const etaToFirstStopMinutes = trip?.route?.duration_minutes
+    ? Math.max(1, Math.round(trip.route.duration_minutes / Math.max(2, stopCount + 1)))
+    : null;
+  const tripStateTone = !trip
+    ? "waiting"
+    : trip.status.includes("delay") || trip.status.includes("failed")
+      ? "delayed"
+      : "active";
 
   useEffect(() => {
     if (
@@ -233,6 +268,46 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
     await action();
     setStatusMessage(successMessage);
     await Promise.all([refresh(), refreshBrief()]);
+  }
+
+  async function handleStatusChange(status: string) {
+    if (!token) {
+      return;
+    }
+    const requiresConfirm = status === "offline" || status === "maintenance";
+    if (requiresConfirm) {
+      const confirmed = window.confirm(
+        `Switch van status to ${status.replaceAll("_", " ")}? This removes you from active dispatch eligibility.`,
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+    await runAction(
+      () => api.updateDriverStatus(token, status),
+      `Driver status updated to ${status.replaceAll("_", " ")}.`,
+    );
+  }
+
+  function useCurrentGpsLocation() {
+    if (!navigator.geolocation) {
+      setShareError("This browser does not support GPS location.");
+      return;
+    }
+    setShareError(null);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocation({
+          latitude: position.coords.latitude.toFixed(6),
+          longitude: position.coords.longitude.toFixed(6),
+        });
+        setStatusMessage("Current GPS coordinates loaded.");
+      },
+      (gpsError) => {
+        setShareError(gpsError.message || "Could not fetch current GPS location.");
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 3000 },
+    );
   }
 
   function enqueueLocationUpdate(latitude: number, longitude: number) {
@@ -364,56 +439,60 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
     >
       {!operationsOnly && (
         <>
-          <div className="content-grid four-column">
+          <div className="content-grid four-column driver-metric-grid">
             <MetricPanel
+              className="driver-metric-card"
+              detail={currentVanStatus.replaceAll("_", " ")}
               label="Assigned Van"
+              onClick={() => navigate("/driver/operations")}
               value={dashboard?.van?.license_plate || "Not assigned"}
-              detail={dashboard?.van?.status || "offline"}
-              onClick={() => navigate("/driver/operations")}
             />
             <MetricPanel
-              label="Occupancy"
-              value={`${dashboard?.van?.current_occupancy || 0}/${dashboard?.van?.capacity || 0}`}
+              className="driver-metric-card"
               detail="passengers onboard"
+              label="Occupancy"
               onClick={() => navigate("/driver/operations")}
+              value={`${dashboard?.van?.current_occupancy || 0}/${dashboard?.van?.capacity || 0}`}
             />
             <MetricPanel
+              className={`driver-metric-card active-trip-${tripStateTone}`}
+              detail={trip ? `${trip.passenger_count} passenger(s)` : "waiting for dispatch"}
               label="Active Trip"
-              value={trip ? trip.status.replaceAll("_", " ") : "No trip"}
-              detail={
-                trip ? `${trip.passenger_count} passenger(s)` : "waiting for dispatch"
-              }
               onClick={() => navigate("/driver/operations")}
+              value={trip ? trip.status.replaceAll("_", " ") : "No trip"}
             />
-            <section className="metric-panel">
+            <section className="metric-panel driver-metric-card">
               <span>Realtime Feed</span>
               <LiveStatusBadge
-                state={connectionState}
-                quality={connectionQuality}
                 lagSeconds={streamLagSeconds}
                 lastUpdatedAt={lastMessageAt}
+                quality={connectionQuality}
+                state={connectionState}
               />
-              <p>{streamError || "Trip and van updates are streaming live."}</p>
+              <p>{streamError || "Live - updates every 15s when connected."}</p>
             </section>
           </div>
 
           <div className="content-grid two-column">
             <LiveMap
+              allowEmptyMap
+              height={420}
+              mapUnavailableMessage={mapUnavailableMessage}
               title="Driver route board"
-              subtitle="Track the van, queued pickups, and shared destination on real map tiles."
+              subtitle="Track your van, queued pickup stops, and destination route."
               markers={mapMarkers}
               polylines={mapPolylines}
-              emptyMessage="Push a live location and receive a trip assignment to populate the route."
+              emptyMessage="Waiting for trip assignment to render route overlays."
             />
             <CopilotPanel
-              title="Driver copilot"
-              brief={brief}
-              reply={reply}
-              loading={loading}
               asking={asking}
+              brief={brief}
               error={copilotError}
-              onRefresh={() => void refreshBrief()}
+              loading={loading}
               onAsk={askCopilot}
+              onRefresh={() => void refreshBrief()}
+              reply={reply}
+              title="Driver copilot"
             />
           </div>
         </>
@@ -427,7 +506,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
       )}
 
       <div className="content-grid two-column">
-        <section className="panel">
+        <section className="panel driver-controls-panel">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Vehicle Controls</p>
@@ -435,18 +514,14 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
             </div>
           </div>
           <div className="stack">
-            <div className="button-row">
+            <div className="button-row status-toggle-row">
               {["available", "on_trip", "offline", "maintenance"].map((status) => (
                 <button
-                  className="secondary-button"
+                  className={`secondary-button status-toggle ${
+                    currentVanStatus === status ? "active" : ""
+                  }`}
                   key={status}
-                  onClick={() =>
-                    token &&
-                    void runAction(
-                      () => api.updateDriverStatus(token, status),
-                      `Driver status updated to ${status}.`,
-                    )
-                  }
+                  onClick={() => void handleStatusChange(status)}
                   type="button"
                 >
                   {status.replaceAll("_", " ")}
@@ -454,51 +529,46 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
               ))}
             </div>
 
-            <div className="inline-grid">
-              <label>
-                Latitude
-                <input
-                  value={location.latitude}
-                  onChange={(event) =>
-                    setLocation((current) => ({
-                      ...current,
-                      latitude: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                Longitude
-                <input
-                  value={location.longitude}
-                  onChange={(event) =>
-                    setLocation((current) => ({
-                      ...current,
-                      longitude: event.target.value,
-                    }))
-                  }
-                />
-              </label>
+            <div className="driver-status-badges">
+              <span className={`driver-status-pill ${sharingMode === "off" ? "off" : "on"}`}>
+                <span className="driver-status-dot" />
+                Sharing mode: {sharingMode}
+              </span>
+              <span className={`driver-status-pill ${isBrowserOnline ? "on" : "off"}`}>
+                <span className="driver-status-dot" />
+                Connection: {isBrowserOnline ? "online" : "offline"}
+              </span>
+            </div>
+
+            <div className="list-card compact-card">
+              <strong>Current coordinates</strong>
+              <p>
+                {location.latitude && location.longitude
+                  ? `${location.latitude}, ${location.longitude}`
+                  : "No location selected yet"}
+              </p>
+              <div className="button-row">
+                <button className="secondary-button" onClick={useCurrentGpsLocation} type="button">
+                  Use my current GPS location
+                </button>
+                <button
+                  className="primary-button"
+                  onClick={() => {
+                    const currentCoordinates = resolveManualCoordinates(location, dashboard);
+                    if (!currentCoordinates) {
+                      setShareError("Use your GPS location before pushing updates.");
+                      return;
+                    }
+                    void syncLocation(currentCoordinates.latitude, currentCoordinates.longitude);
+                  }}
+                  type="button"
+                >
+                  Push vehicle location
+                </button>
+              </div>
             </div>
 
             <div className="button-row">
-              <button
-                className="primary-button"
-                onClick={() => {
-                  const currentCoordinates = resolveManualCoordinates(location, dashboard);
-                  if (!currentCoordinates) {
-                    setShareError("Enter a valid latitude and longitude before pushing location.");
-                    return;
-                  }
-                  void syncLocation(
-                    currentCoordinates.latitude,
-                    currentCoordinates.longitude,
-                  );
-                }}
-                type="button"
-              >
-                Push vehicle location
-              </button>
               <button
                 className={sharingMode === "gps" ? "primary-button" : "secondary-button"}
                 onClick={() => {
@@ -511,7 +581,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                 Start GPS sharing
               </button>
               <button
-                className={sharingMode === "simulated" ? "primary-button" : "secondary-button"}
+                className={sharingMode === "simulated" ? "secondary-button" : "ghost-button"}
                 onClick={() => {
                   setSharingMode("simulated");
                   setStatusMessage("Simulated route broadcasting started.");
@@ -535,6 +605,11 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                 className="ghost-button"
                 disabled={locationQueue.length === 0 || queueSyncing}
                 onClick={() => void flushLocationQueue()}
+                title={
+                  locationQueue.length === 0
+                    ? "No pending location updates to clear."
+                    : undefined
+                }
                 type="button"
               >
                 {queueSyncing
@@ -544,75 +619,90 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                     : "Queue clear"}
               </button>
             </div>
+            {locationQueue.length === 0 && (
+              <p className="muted-copy">No pending location updates to clear.</p>
+            )}
 
-            <div className="stack compact">
-              <InfoRow label="Sharing mode" value={sharingMode} />
-              <InfoRow
-                label="Connection"
-                value={isBrowserOnline ? "online" : "offline (queueing updates)"}
-              />
-              <InfoRow
-                label="Last location sync"
-                value={lastLocationSync ? formatTimestamp(lastLocationSync) : "No sync yet"}
-              />
-              <InfoRow
-                label="Queue backlog"
-                value={`${locationQueue.length} pending update(s)`}
-              />
-              <InfoRow
-                label="Last queue flush"
-                value={lastQueueFlushAt ? formatTimestamp(lastQueueFlushAt) : "No flush yet"}
-              />
-              <InfoRow
-                label="Vehicle ping"
-                value={
-                  dashboard?.van?.last_location_update
-                    ? formatTimestamp(dashboard.van.last_location_update)
-                    : "Waiting for first update"
-                }
-              />
-              <InfoRow
-                label="Route source"
-                value={trip?.route?.source || "Awaiting trip route"}
-              />
-            </div>
-
+            <details className="technical-details">
+              <summary>Technical details</summary>
+              <div className="stack compact">
+                <InfoRow
+                  label="Last location sync"
+                  value={lastLocationSync ? formatTimestamp(lastLocationSync) : "No sync yet"}
+                />
+                <InfoRow
+                  label="Queue backlog"
+                  value={`${locationQueue.length} pending update(s)`}
+                />
+                <InfoRow
+                  label="Last queue flush"
+                  value={lastQueueFlushAt ? formatTimestamp(lastQueueFlushAt) : "No flush yet"}
+                />
+                <InfoRow
+                  label="Vehicle ping"
+                  value={
+                    dashboard?.van?.last_location_update
+                      ? formatTimestamp(dashboard.van.last_location_update)
+                      : "Waiting for first update"
+                  }
+                />
+                {trip?.route?.source && <InfoRow label="Route source" value={trip.route.source} />}
+              </div>
+            </details>
           </div>
         </section>
 
-        <section className="panel standout">
+        <section className="panel standout driver-trip-board">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Trip Board</p>
-              <h3>{trip ? `Trip ${trip.id.slice(0, 8)}` : "No active assignment"}</h3>
+              <h3>{trip ? `Trip #${trip.id.slice(0, 8).toUpperCase()}` : "No active assignment"}</h3>
             </div>
+          </div>
+          <div className="next-action-banner">
+            <strong>Next action</strong>
+            <p>{nextActionMessage}</p>
           </div>
           {trip ? (
             <div className="stack">
-              <InfoRow label="Status" value={trip.status.replaceAll("_", " ")} />
-              <InfoRow
-                label="Driver acknowledgement"
-                value={
-                  trip.accepted_at
-                    ? formatTimestamp(trip.accepted_at)
-                    : "Waiting for your acceptance"
-                }
-              />
-              <InfoRow label="Passenger count" value={`${trip.passenger_count} passenger(s)`} />
-              <InfoRow
-                label="Route duration"
-                value={
-                  trip.route?.duration_minutes
-                    ? `${trip.route.duration_minutes} min`
-                    : trip.estimated_duration_minutes
-                      ? `${trip.estimated_duration_minutes} min`
-                      : "TBD"
-                }
-              />
-              <InfoRow
-                label="Route distance"
-                value={formatDistance(trip.route?.distance_meters)}
-              />
+              <div className="trip-summary-grid">
+                <article className="list-card compact-card">
+                  <span className="eyebrow">Status</span>
+                  <strong>{trip.status.replaceAll("_", " ")}</strong>
+                  <p>{tripAccepted ? "Acknowledged" : "Waiting for acceptance"}</p>
+                </article>
+                <article className="list-card compact-card">
+                  <span className="eyebrow">Passengers</span>
+                  <strong>{trip.passenger_count}</strong>
+                  <p>on this trip</p>
+                </article>
+                <article className="list-card compact-card">
+                  <span className="eyebrow">ETA to stop 1</span>
+                  <strong>{etaToFirstStopMinutes ? `${etaToFirstStopMinutes} min` : "TBD"}</strong>
+                  <p>{formatDistance(trip.route?.distance_meters)}</p>
+                </article>
+              </div>
+
+              <div className="stack compact">
+                <strong>Pickup sequence</strong>
+                {(trip.route?.pickup_sequence || []).length === 0 ? (
+                  <p className="muted-copy">Pickup stops will appear once the route is finalized.</p>
+                ) : (
+                  <div className="stack compact">
+                    {(trip.route?.pickup_sequence || []).map((stop, index) => (
+                      <article className="list-card compact-card stop-sequence-card" key={stop.ride_request_id}>
+                        <span className="stop-index">{index + 1}</span>
+                        <div>
+                          <strong>{stop.passenger_name || `Passenger ${index + 1}`}</strong>
+                          <p>{stop.pickup_address || "Pickup location pending"}</p>
+                          <p>{stop.destination_address || "Destination pending"}</p>
+                        </div>
+                        <span className="status-pill">{(stop.status || "assigned").replaceAll("_", " ")}</span>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               <div className="button-row">
                 {!tripAccepted && (
@@ -640,19 +730,32 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                   </button>
                 )}
                 {tripStarted && (
-                  <button
-                    className="secondary-button"
-                    onClick={() =>
-                      token &&
-                      void runAction(
-                        () => api.completeTrip(token, trip.id),
-                        "Trip completed and van released.",
-                      )
-                    }
-                    type="button"
-                  >
-                    Complete trip
-                  </button>
+                  <>
+                    <button
+                      className="secondary-button"
+                      onClick={() =>
+                        setStatusMessage(
+                          "Arrival recorded. Continue passenger pickup confirmations.",
+                        )
+                      }
+                      type="button"
+                    >
+                      Mark arrived
+                    </button>
+                    <button
+                      className="secondary-button"
+                      onClick={() =>
+                        token &&
+                        void runAction(
+                          () => api.completeTrip(token, trip.id),
+                          "Trip completed and van released.",
+                        )
+                      }
+                      type="button"
+                    >
+                      Complete trip
+                    </button>
+                  </>
                 )}
               </div>
 
@@ -772,10 +875,11 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
               )}
             </div>
           ) : (
-            <p className="muted-copy">
-              No active trip yet. Once employees request rides and a van is available, trips
-              will appear here live.
-            </p>
+            <div className="driver-empty-state">
+              <span aria-hidden="true">van</span>
+              <strong>Standing by for dispatch</strong>
+              <p>Your next trip will appear here automatically.</p>
+            </div>
           )}
         </section>
       </div>
@@ -788,11 +892,13 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
           </div>
         </div>
         {upcomingScheduledWork.length === 0 ? (
-          <p className="muted-copy">
-            No scheduled assignments are waiting right now.
-          </p>
+          <div className="driver-empty-state compact">
+            <span aria-hidden="true">clock</span>
+            <strong>No scheduled assignments waiting</strong>
+            <p>New pickups will appear here automatically when dispatch windows open.</p>
+          </div>
         ) : (
-          <div className="stack compact">
+          <div className="scheduled-timeline">
             {upcomingScheduledWork.map((item) => {
               const pickupMapUrl = buildGoogleMapsSearchUrl(item.pickup_address);
               const directionsUrl = buildGoogleMapsDirectionsUrl({
@@ -800,9 +906,12 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                 destination: item.destination_address,
               });
               return (
-                <div className="list-card compact-card" key={item.ride_id}>
+                <article className="list-card compact-card timeline-item" key={item.ride_id}>
+                  <span className="timeline-time">
+                    {item.scheduled_time ? formatDateTime(item.scheduled_time) : "Pending"}
+                  </span>
                   <div>
-                    <strong>{item.passenger_name || `Ride ${item.ride_id.slice(0, 8)}`}</strong>
+                    <strong>{item.passenger_name || `Ride #${item.ride_id.slice(0, 4).toUpperCase()}`}</strong>
                     <p>
                       {item.pickup_address}
                       {" -> "}
@@ -850,7 +959,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                       {formatScheduledCountdown(item.minutes_until_pickup, item.minutes_until_dispatch_window)}
                     </span>
                   </div>
-                </div>
+                </article>
               );
             })}
           </div>
@@ -858,21 +967,10 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
       </section>
 
       <div className="content-grid two-column">
-        {!operationsOnly ? (
-          <AIInsightsPanel insights={insights} title="Live dispatch cues" />
-        ) : (
-          <section className="panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Operational Cues</p>
-                <h3>Trip guidance</h3>
-              </div>
-            </div>
-            <p className="muted-copy">
-              Return to the main driver console to review the full AI dispatch brief.
-            </p>
-          </section>
-        )}
+        <AIInsightsPanel
+          insights={insights}
+          title={operationsOnly ? "Trip guidance" : "Live dispatch cues"}
+        />
         <LiveEventsPanel events={recentEvents} title="Trip event feed" />
       </div>
     </AppLayout>
@@ -961,6 +1059,7 @@ function stepToward(
 function buildDriverMapMarkers(
   dashboard: DriverDashboardSummary | null,
   trip: DriverTripSummary | null,
+  fallbackCoordinates: { latitude: number; longitude: number } | null,
 ): MapMarkerSpec[] {
   const markers: MapMarkerSpec[] = [];
   if (
@@ -974,9 +1073,20 @@ function buildDriverMapMarkers(
       title: dashboard.van.license_plate,
       subtitle: dashboard.van.status,
       tone: "van",
+      markerLabel: "V",
+    });
+  } else if (fallbackCoordinates) {
+    markers.push({
+      id: "driver-van-fallback",
+      latitude: fallbackCoordinates.latitude,
+      longitude: fallbackCoordinates.longitude,
+      title: dashboard?.van?.license_plate || "Your van",
+      subtitle: "current GPS",
+      tone: "van",
+      markerLabel: "V",
     });
   }
-  for (const stop of trip?.route?.pickup_sequence || []) {
+  for (const [index, stop] of (trip?.route?.pickup_sequence || []).entries()) {
     if (
       typeof stop.pickup_latitude === "number" &&
       typeof stop.pickup_longitude === "number"
@@ -985,9 +1095,11 @@ function buildDriverMapMarkers(
         id: `${stop.ride_request_id}-pickup`,
         latitude: stop.pickup_latitude,
         longitude: stop.pickup_longitude,
-        title: stop.passenger_name || "Pickup",
+        title: `Stop ${index + 1}`,
         subtitle: stop.pickup_address || undefined,
         tone: stop.status === "assigned" ? "pickup" : "warning",
+        markerLabel: `${index + 1}`,
+        badgeCount: 1,
       });
     }
   }
@@ -1002,14 +1114,24 @@ function buildDriverMapMarkers(
       title: "Shared destination",
       subtitle: trip.route.destination_address || undefined,
       tone: "destination",
+      markerLabel: "D",
     });
   }
   return markers;
 }
 
-function buildRoutePolylines(route?: RoutePlan | null): MapPolylineSpec[] {
+function buildRoutePolylines(
+  route: RoutePlan | null | undefined,
+  markers: MapMarkerSpec[],
+): MapPolylineSpec[] {
   if (!route) {
-    return [];
+    const fallbackPoints = markers.map((marker) => ({
+      latitude: marker.latitude,
+      longitude: marker.longitude,
+    }));
+    return fallbackPoints.length > 1
+      ? [{ id: "fallback-route", points: fallbackPoints, color: "#58b6ff" }]
+      : [];
   }
   if (route.encoded_polyline) {
     return [{ id: "route", encodedPath: route.encoded_polyline, color: "#58b6ff" }];
@@ -1028,7 +1150,17 @@ function buildRoutePolylines(route?: RoutePlan | null): MapPolylineSpec[] {
       : null,
   ].filter(Boolean) as Array<{ latitude: number; longitude: number }>;
 
-  return points.length > 1 ? [{ id: "route", points, color: "#58b6ff" }] : [];
+  if (points.length > 1) {
+    return [{ id: "route", points, color: "#58b6ff" }];
+  }
+
+  const fallbackPoints = markers.map((marker) => ({
+    latitude: marker.latitude,
+    longitude: marker.longitude,
+  }));
+  return fallbackPoints.length > 1
+    ? [{ id: "fallback-route", points: fallbackPoints, color: "#58b6ff" }]
+    : [];
 }
 
 function resolveManualCoordinates(

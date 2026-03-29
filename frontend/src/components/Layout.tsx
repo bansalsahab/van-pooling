@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../state/auth";
 
@@ -26,6 +26,7 @@ export function AppLayout({
   children,
 }: LayoutProps) {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const notificationRoute = notificationRouteForRole(user?.role);
 
   return (
@@ -35,7 +36,7 @@ export function AppLayout({
           <div className="brand-mark">VP</div>
           <div>
             <h1>Van Pooling</h1>
-            <p>{user?.company_name || "Corporate Mobility"}</p>
+            <span className="tenant-badge">{user?.company_name || "Corporate Mobility"}</span>
           </div>
         </div>
 
@@ -70,7 +71,9 @@ export function AppLayout({
               <NavLink className={({ isActive }) => (isActive ? "active" : "")} to={notificationRoute}>
                 Notifications
                 {notificationUnreadCount > 0 ? (
-                  <span className="nav-dot" aria-label="New notifications" />
+                  <span className="nav-count-badge" aria-label="New notifications">
+                    {notificationUnreadCount}
+                  </span>
                 ) : null}
               </NavLink>
             </>
@@ -100,7 +103,9 @@ export function AppLayout({
               <NavLink className={({ isActive }) => (isActive ? "active" : "")} to={notificationRoute}>
                 Notifications
                 {notificationUnreadCount > 0 ? (
-                  <span className="nav-dot" aria-label="New notifications" />
+                  <span className="nav-count-badge" aria-label="New notifications">
+                    {notificationUnreadCount}
+                  </span>
                 ) : null}
               </NavLink>
             </>
@@ -166,7 +171,9 @@ export function AppLayout({
               <NavLink className={({ isActive }) => (isActive ? "active" : "")} to={notificationRoute}>
                 Notifications
                 {notificationUnreadCount > 0 ? (
-                  <span className="nav-dot" aria-label="New notifications" />
+                  <span className="nav-count-badge" aria-label="New notifications">
+                    {notificationUnreadCount}
+                  </span>
                 ) : null}
               </NavLink>
             </>
@@ -193,6 +200,15 @@ export function AppLayout({
               {user?.role === "admin" && user?.admin_scope ? ` - ${user.admin_scope}` : ""}
             </span>
           </div>
+          {user?.role === "driver" && (
+            <button
+              className="secondary-button sos-button"
+              onClick={() => navigate("/help")}
+              type="button"
+            >
+              SOS / Report Issue
+            </button>
+          )}
           <button className="ghost-button" onClick={logout}>
             Sign out
           </button>
