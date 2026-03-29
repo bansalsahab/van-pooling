@@ -25,6 +25,11 @@ from app.schemas.policy import (
 )
 from app.schemas.ride_request import AdminPendingRideSummary
 from app.schemas.sla import IncidentTimelineItem, SLASnapshotSummary
+from app.schemas.service_zone import (
+    ServiceZoneCreate,
+    ServiceZoneSummary,
+    ServiceZoneUpdate,
+)
 from app.schemas.trip import TripSummary
 from app.schemas.user import (
     AdminPasswordResetResponse,
@@ -64,6 +69,11 @@ from app.services.policy_service import (
     get_company_policy,
     simulate_company_policy,
     update_company_policy,
+)
+from app.services.service_zone_service import (
+    create_company_service_zone,
+    list_company_service_zones,
+    update_company_service_zone,
 )
 from app.services.ride_service import list_company_pending_requests
 from app.services.sla_service import collect_company_sla_snapshot, list_admin_incidents
@@ -212,6 +222,17 @@ def users(
     return list_company_users(db, current_user.company_id)
 
 
+@router.get("/zones", response_model=list[ServiceZoneSummary])
+def zones(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_admin_permissions(AdminPermission.DASHBOARD_READ)
+    ),
+) -> list[ServiceZoneSummary]:
+    """Return service-zone polygons for the admin's company."""
+    return list_company_service_zones(db, current_user.company_id)
+
+
 @router.get("/trips", response_model=list[TripSummary])
 def trips(
     db: Session = Depends(get_db),
@@ -340,6 +361,31 @@ def reset_user_password(
 ) -> AdminPasswordResetResponse:
     """Issue a temporary password and enforce a post-login password reset."""
     return reset_company_user_password(db, current_user.company_id, user_id)
+
+
+@router.post("/zones", response_model=ServiceZoneSummary)
+def create_zone(
+    payload: ServiceZoneCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_admin_permissions(AdminPermission.POLICY_MANAGE)
+    ),
+) -> ServiceZoneSummary:
+    """Create a service-zone polygon."""
+    return create_company_service_zone(db, current_user.company_id, payload)
+
+
+@router.put("/zones/{zone_id}", response_model=ServiceZoneSummary)
+def update_zone(
+    zone_id: UUID,
+    payload: ServiceZoneUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_admin_permissions(AdminPermission.POLICY_MANAGE)
+    ),
+) -> ServiceZoneSummary:
+    """Update a service-zone polygon."""
+    return update_company_service_zone(db, current_user.company_id, zone_id, payload)
 
 
 @router.post("/vans", response_model=VanSummary)

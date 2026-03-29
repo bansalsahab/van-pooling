@@ -20,6 +20,7 @@ from app.schemas.policy import (
     PolicyViolation,
     PolicyZoneBounds,
 )
+from app.services.service_zone_service import point_allowed_in_active_zones
 
 
 DEFAULT_POLICY_CONFIG = CommutePolicyConfig()
@@ -86,6 +87,8 @@ def evaluate_policy_for_ride_request(
     role: str = "employee",
     team: str | None = None,
     is_women_rider: bool = False,
+    pickup_in_active_zone: bool | None = None,
+    destination_in_active_zone: bool | None = None,
 ) -> list[PolicyViolation]:
     """Evaluate policy rules for one candidate ride request."""
     now = _normalize_datetime(reference_time or datetime.utcnow())
@@ -93,12 +96,16 @@ def evaluate_policy_for_ride_request(
     violations: list[PolicyViolation] = []
 
     if policy.service_zone.enabled:
-        pickup_bounds = policy.service_zone.pickup_bounds
-        if _bounds_configured(pickup_bounds) and not _coordinate_in_bounds(
-            pickup_latitude,
-            pickup_longitude,
-            pickup_bounds,
-        ):
+        pickup_allowed = (
+            pickup_in_active_zone
+            if pickup_in_active_zone is not None
+            else _coordinate_in_bounds(
+                pickup_latitude,
+                pickup_longitude,
+                policy.service_zone.pickup_bounds,
+            )
+        )
+        if not pickup_allowed:
             violations.append(
                 PolicyViolation(
                     code="pickup_outside_service_zone",
@@ -107,12 +114,16 @@ def evaluate_policy_for_ride_request(
                 )
             )
 
-        destination_bounds = policy.service_zone.destination_bounds
-        if _bounds_configured(destination_bounds) and not _coordinate_in_bounds(
-            destination_latitude,
-            destination_longitude,
-            destination_bounds,
-        ):
+        destination_allowed = (
+            destination_in_active_zone
+            if destination_in_active_zone is not None
+            else _coordinate_in_bounds(
+                destination_latitude,
+                destination_longitude,
+                policy.service_zone.destination_bounds,
+            )
+        )
+        if not destination_allowed:
             violations.append(
                 PolicyViolation(
                     code="destination_outside_service_zone",
@@ -186,6 +197,20 @@ def simulate_company_policy(
 ) -> PolicySimulationResponse:
     """Evaluate company policy for a simulated ride request."""
     policy = get_company_policy(db, company_id)
+    pickup_in_zone = point_allowed_in_active_zones(
+        db,
+        company_id,
+        zone_type="pickup",
+        latitude=payload.pickup_latitude,
+        longitude=payload.pickup_longitude,
+    )
+    destination_in_zone = point_allowed_in_active_zones(
+        db,
+        company_id,
+        zone_type="destination",
+        latitude=payload.destination_latitude,
+        longitude=payload.destination_longitude,
+    )
     violations = evaluate_policy_for_ride_request(
         policy,
         pickup_latitude=payload.pickup_latitude,
@@ -196,6 +221,8 @@ def simulate_company_policy(
         role=payload.role,
         team=payload.team,
         is_women_rider=payload.is_women_rider,
+        pickup_in_active_zone=pickup_in_zone,
+        destination_in_active_zone=destination_in_zone,
     )
     return PolicySimulationResponse(
         allowed=not bool(violations),

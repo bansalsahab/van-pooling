@@ -427,6 +427,75 @@ export interface PolicySimulationResponse {
   policy: CommutePolicyConfig;
 }
 
+export interface ServiceZoneSummary {
+  id: string;
+  company_id?: string | null;
+  name: string;
+  zone_type: "pickup" | "destination";
+  polygon_geojson: Record<string, unknown>;
+  notes?: string | null;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ServiceZoneCreateInput {
+  name: string;
+  zone_type: "pickup" | "destination";
+  polygon_geojson: Record<string, unknown>;
+  notes?: string;
+  is_active?: boolean;
+}
+
+export interface ServiceZoneUpdateInput {
+  name?: string;
+  polygon_geojson?: Record<string, unknown>;
+  notes?: string | null;
+  is_active?: boolean;
+}
+
+export interface RecurringLocationInput {
+  address: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface RecurringRideRuleSummary {
+  id: string;
+  user_id: string;
+  company_id?: string | null;
+  name: string;
+  status: "active" | "paused" | string;
+  weekdays: number[];
+  pickup_time_local: string;
+  timezone: string;
+  pickup: RecurringLocationInput;
+  destination: RecurringLocationInput;
+  last_generated_for_date?: string | null;
+  next_pickup_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface RecurringRideRuleCreateInput {
+  name: string;
+  weekdays: number[];
+  pickup_time_local: string;
+  timezone: string;
+  pickup: RecurringLocationInput;
+  destination: RecurringLocationInput;
+}
+
+export interface RecurringRideRuleUpdateInput {
+  name?: string;
+  weekdays?: number[];
+  pickup_time_local?: string;
+  timezone?: string;
+  status?: "active" | "paused";
+  pickup?: RecurringLocationInput;
+  destination?: RecurringLocationInput;
+}
+
 export interface TripSummary {
   id: string;
   status: string;

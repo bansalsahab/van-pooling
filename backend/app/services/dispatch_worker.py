@@ -20,6 +20,7 @@ from app.services.notification_service import (
     resolve_stale_dispatch_alerts,
 )
 from app.services.policy_service import sort_rides_by_policy_priority
+from app.services.recurring_schedule_service import materialize_due_recurring_rides
 from app.services.ride_service import attempt_match_ride, fail_ride_request
 from app.services.sla_service import (
     create_sla_alerts_for_company,
@@ -174,6 +175,9 @@ def _process_dispatch_cycle(db) -> None:
     now = datetime.utcnow()
     cutoff_seconds = settings.MATCHING_AGGREGATION_WINDOW_SECONDS + settings.MATCHING_RECOVERY_GRACE_SECONDS
     touched_company_ids = set()
+    created_from_recurring = materialize_due_recurring_rides(db, now=now)
+    if created_from_recurring > 0:
+        logger.info("Created %s recurring ride request(s) in this dispatch cycle.", created_from_recurring)
 
     immediate_rides = db.scalars(
         select(RideRequest).where(

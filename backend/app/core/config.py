@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     DISPATCH_WORKER_INTERVAL_SECONDS: int = 15
     SCHEDULED_RIDE_DISPATCH_LEAD_MINUTES: int = 15
     SCHEDULED_RIDE_UNMATCHED_ALERT_MINUTES: int = 10
+    RECURRING_RIDE_LOOKAHEAD_MINUTES: int = 30
 
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"

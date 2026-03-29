@@ -8,6 +8,8 @@ from app.models.trip_passenger import TripPassenger
 from app.models.analytics_event import AnalyticsEvent
 from app.models.notification import Notification
 from app.models.dispatch_event import DispatchEvent
+from app.models.service_zone import ServiceZone
+from app.models.recurring_ride_rule import RecurringRideRule
 
 __all__ = [
     "Company",
@@ -19,4 +21,6 @@ __all__ = [
     "AnalyticsEvent",
     "Notification",
     "DispatchEvent",
+    "ServiceZone",
+    "RecurringRideRule",
 ]

@@ -27,10 +27,16 @@ import type {
   NotificationSummary,
   PolicySimulationRequest,
   PolicySimulationResponse,
+  RecurringRideRuleCreateInput,
+  RecurringRideRuleSummary,
+  RecurringRideRuleUpdateInput,
   RideSummary,
   RoutePlan,
   RouteWaypoint,
   SLASnapshotSummary,
+  ServiceZoneCreateInput,
+  ServiceZoneSummary,
+  ServiceZoneUpdateInput,
   TripSummary,
   KPIWindow,
   UserProfileUpdateInput,
@@ -213,6 +219,23 @@ export const api = {
       body: payload,
     });
   },
+  getRecurringSchedules(token: string) {
+    return request<RecurringRideRuleSummary[]>("/rides/schedules", { token });
+  },
+  createRecurringSchedule(token: string, payload: RecurringRideRuleCreateInput) {
+    return request<RecurringRideRuleSummary>("/rides/schedules", {
+      method: "POST",
+      token,
+      body: payload,
+    });
+  },
+  updateRecurringSchedule(token: string, ruleId: string, payload: RecurringRideRuleUpdateInput) {
+    return request<RecurringRideRuleSummary>(`/rides/schedules/${ruleId}`, {
+      method: "PUT",
+      token,
+      body: payload,
+    });
+  },
   getDriverDashboard(token: string) {
     return request<DriverDashboardSummary>("/driver/dashboard", { token });
   },
@@ -323,6 +346,23 @@ export const api = {
   },
   getAdminProfiling(token: string) {
     return request<DomainProfilingSnapshot>("/admin/profiling", { token });
+  },
+  getAdminZones(token: string) {
+    return request<ServiceZoneSummary[]>("/admin/zones", { token });
+  },
+  createAdminZone(token: string, payload: ServiceZoneCreateInput) {
+    return request<ServiceZoneSummary>("/admin/zones", {
+      method: "POST",
+      token,
+      body: payload,
+    });
+  },
+  updateAdminZone(token: string, zoneId: string, payload: ServiceZoneUpdateInput) {
+    return request<ServiceZoneSummary>(`/admin/zones/${zoneId}`, {
+      method: "PUT",
+      token,
+      body: payload,
+    });
   },
   getAdminVans(token: string) {
     return request<VanSummary[]>("/admin/vans", { token });

@@ -44,6 +44,7 @@ from app.services.policy_service import (
     resolve_user_team,
 )
 from app.services.routing_service import rebuild_trip_route
+from app.services.service_zone_service import point_allowed_in_active_zones
 
 
 AVERAGE_SPEED_METERS_PER_MINUTE = 400.0
@@ -1072,6 +1073,20 @@ def create_ride_request(
         role=current_user.role.value,
         team=resolve_user_team(current_user),
         is_women_rider=resolve_user_is_women_rider(current_user),
+        pickup_in_active_zone=point_allowed_in_active_zones(
+            db,
+            current_user.company_id,
+            zone_type="pickup",
+            latitude=payload.pickup.latitude,
+            longitude=payload.pickup.longitude,
+        ),
+        destination_in_active_zone=point_allowed_in_active_zones(
+            db,
+            current_user.company_id,
+            zone_type="destination",
+            latitude=payload.destination.latitude,
+            longitude=payload.destination.longitude,
+        ),
     )
     if policy_violations:
         raise HTTPException(
