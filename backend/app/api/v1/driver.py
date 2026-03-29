@@ -19,10 +19,23 @@ from app.models.user import User, UserRole
 from app.models.van import Van, VanStatus
 from app.schemas.common import MessageResponse
 from app.schemas.dashboard import DriverDashboardSummary
+from app.schemas.driver_ops import (
+    DriverShiftStartInput,
+    DriverShiftSummary,
+    DriverVehicleCheckCreate,
+    DriverVehicleCheckSummary,
+)
 from app.schemas.trip import DriverTripSummary
 from app.schemas.van import DriverLocationUpdate, DriverStatusUpdate
 from app.services.audit_service import record_dispatch_event
 from app.services.dispatch_ops_service import mark_passenger_no_show
+from app.services.driver_ops_service import (
+    clock_out_driver_shift,
+    list_driver_shifts,
+    list_driver_vehicle_checks,
+    start_driver_shift,
+    submit_driver_vehicle_check,
+)
 from app.services.dashboard_service import get_driver_dashboard, serialize_driver_trip
 from app.services.lifecycle_service import TRIP_ACTIVE_STATUSES, close_trip, synchronize_trip_lifecycle
 from app.services.notification_service import queue_notification_once
@@ -201,6 +214,56 @@ def driver_dashboard(
 ) -> DriverDashboardSummary:
     """Return the driver's dashboard snapshot."""
     return get_driver_dashboard(db, current_user)
+
+
+@router.get("/shifts", response_model=list[DriverShiftSummary])
+def shifts(
+    limit: int = 25,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DRIVER)),
+) -> list[DriverShiftSummary]:
+    """Return recent shift entries for the current driver."""
+    return list_driver_shifts(db, current_user, limit=limit)
+
+
+@router.post("/shifts/start", response_model=DriverShiftSummary)
+def start_shift(
+    payload: DriverShiftStartInput,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DRIVER)),
+) -> DriverShiftSummary:
+    """Start a shift for the current driver when no active shift exists."""
+    return start_driver_shift(db, current_user, payload)
+
+
+@router.post("/shifts/{shift_id}/clock-out", response_model=DriverShiftSummary)
+def clock_out_shift(
+    shift_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DRIVER)),
+) -> DriverShiftSummary:
+    """Clock out one active shift for the current driver."""
+    return clock_out_driver_shift(db, current_user, shift_id)
+
+
+@router.get("/vehicle-checks", response_model=list[DriverVehicleCheckSummary])
+def vehicle_checks(
+    limit: int = 25,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DRIVER)),
+) -> list[DriverVehicleCheckSummary]:
+    """Return recent vehicle checks submitted by the current driver."""
+    return list_driver_vehicle_checks(db, current_user, limit=limit)
+
+
+@router.post("/vehicle-checks", response_model=DriverVehicleCheckSummary)
+def submit_vehicle_check(
+    payload: DriverVehicleCheckCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DRIVER)),
+) -> DriverVehicleCheckSummary:
+    """Submit a pre-trip vehicle check entry."""
+    return submit_driver_vehicle_check(db, current_user, payload)
 
 
 @router.get("/trips/active", response_model=DriverTripSummary | None)

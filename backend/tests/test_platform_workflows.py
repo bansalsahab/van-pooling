@@ -989,6 +989,66 @@ def test_driver_no_show_flow(client, auth_headers, seeded_data):
     )
 
 
+def test_driver_shift_and_vehicle_check_flow(client, auth_headers, seeded_data):
+    driver_headers = auth_headers(seeded_data["users"]["driver_a1"], "driver")
+    admin_headers = auth_headers(seeded_data["users"]["admin_a"], "admin")
+
+    initial_shifts = client.get(
+        f"{settings.API_V1_STR}/driver/shifts?limit=10",
+        headers=driver_headers,
+    )
+    assert initial_shifts.status_code == 200, initial_shifts.text
+
+    start_shift = client.post(
+        f"{settings.API_V1_STR}/driver/shifts/start",
+        headers=driver_headers,
+        json={"notes": "Starting morning duty"},
+    )
+    assert start_shift.status_code == 200, start_shift.text
+    shift = start_shift.json()
+    assert shift["status"] == "clocked_in"
+    assert shift["clocked_in_at"] is not None
+
+    failed_check = client.post(
+        f"{settings.API_V1_STR}/driver/vehicle-checks",
+        headers=driver_headers,
+        json={
+            "checklist": {
+                "tires": True,
+                "brakes": False,
+                "lights": True,
+            },
+            "notes": "Brake response felt delayed.",
+        },
+    )
+    assert failed_check.status_code == 200, failed_check.text
+    check_payload = failed_check.json()
+    assert check_payload["status"] == "failed"
+    assert "brakes" in check_payload["failed_items"]
+
+    check_history = client.get(
+        f"{settings.API_V1_STR}/driver/vehicle-checks?limit=10",
+        headers=driver_headers,
+    )
+    assert check_history.status_code == 200, check_history.text
+    checks = check_history.json()
+    assert any(item["id"] == check_payload["id"] for item in checks)
+
+    alerts = client.get(
+        f"{settings.API_V1_STR}/admin/alerts",
+        headers=admin_headers,
+    )
+    assert alerts.status_code == 200, alerts.text
+    assert any(item["title"] == "Driver vehicle check failed" for item in alerts.json())
+
+    clock_out = client.post(
+        f"{settings.API_V1_STR}/driver/shifts/{shift['id']}/clock-out",
+        headers=driver_headers,
+    )
+    assert clock_out.status_code == 200, clock_out.text
+    assert clock_out.json()["status"] == "clocked_out"
+
+
 def test_tenant_isolation_for_admin_actions(client, auth_headers, seeded_data):
     employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
     admin_b_headers = auth_headers(seeded_data["users"]["admin_b"], "admin")

@@ -19,6 +19,10 @@ import type {
   CopilotBrief,
   CopilotReply,
   CommutePolicyConfig,
+  DriverShiftStartInput,
+  DriverShiftSummary,
+  DriverVehicleCheckCreateInput,
+  DriverVehicleCheckSummary,
   DriverDashboardSummary,
   DriverTripSummary,
   GeocodeResult,
@@ -247,6 +251,45 @@ export const api = {
       method: "POST",
       token,
       body: { status },
+    });
+  },
+  getDriverShifts(token: string, options?: { limit?: number }) {
+    const params = new URLSearchParams();
+    if (typeof options?.limit === "number") {
+      params.set("limit", String(options.limit));
+    }
+    const query = params.toString();
+    return request<DriverShiftSummary[]>(`/driver/shifts${query ? `?${query}` : ""}`, { token });
+  },
+  startDriverShift(token: string, payload: DriverShiftStartInput = {}) {
+    return request<DriverShiftSummary>("/driver/shifts/start", {
+      method: "POST",
+      token,
+      body: payload,
+    });
+  },
+  clockOutDriverShift(token: string, shiftId: string) {
+    return request<DriverShiftSummary>(`/driver/shifts/${shiftId}/clock-out`, {
+      method: "POST",
+      token,
+    });
+  },
+  getDriverVehicleChecks(token: string, options?: { limit?: number }) {
+    const params = new URLSearchParams();
+    if (typeof options?.limit === "number") {
+      params.set("limit", String(options.limit));
+    }
+    const query = params.toString();
+    return request<DriverVehicleCheckSummary[]>(
+      `/driver/vehicle-checks${query ? `?${query}` : ""}`,
+      { token },
+    );
+  },
+  submitDriverVehicleCheck(token: string, payload: DriverVehicleCheckCreateInput) {
+    return request<DriverVehicleCheckSummary>("/driver/vehicle-checks", {
+      method: "POST",
+      token,
+      body: payload,
     });
   },
   updateDriverLocation(token: string, latitude: number, longitude: number) {

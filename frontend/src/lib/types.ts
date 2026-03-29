@@ -226,6 +226,49 @@ export interface DriverDashboardSummary {
   upcoming_scheduled_work: DriverScheduledWorkSummary[];
 }
 
+export interface DriverShiftSummary {
+  id: string;
+  company_id?: string | null;
+  driver_id: string;
+  status: "scheduled" | "clocked_in" | "clocked_out" | "missed" | string;
+  scheduled_start_at?: string | null;
+  scheduled_end_at?: string | null;
+  clocked_in_at?: string | null;
+  clocked_out_at?: string | null;
+  duration_minutes?: number | null;
+  notes?: string | null;
+  source?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface DriverShiftStartInput {
+  planned_end_at?: string | null;
+  notes?: string;
+}
+
+export interface DriverVehicleCheckSummary {
+  id: string;
+  company_id?: string | null;
+  driver_id: string;
+  van_id?: string | null;
+  shift_id?: string | null;
+  status: "passed" | "failed" | string;
+  checklist: Record<string, boolean>;
+  failed_items: string[];
+  notes?: string | null;
+  submitted_at?: string | null;
+  source?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface DriverVehicleCheckCreateInput {
+  checklist: Record<string, boolean>;
+  notes?: string;
+  status?: "passed" | "failed";
+}
+
 export interface AdminDashboardSummary {
   company_id: string;
   employees_count: number;
