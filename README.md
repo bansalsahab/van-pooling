@@ -1,99 +1,208 @@
 # Van Pooling Platform
 
-Full-stack van pooling platform for employees, drivers, and fleet operators. The app now includes a working React frontend and a FastAPI backend connected through role-based flows.
+Demand-responsive corporate commute platform for three connected roles: employees, drivers, and fleet admins.
 
-## Current scope
+This project is not a consumer taxi app. It is a B2B mobility operations system for companies that want reliable employee transport with live visibility and pooled utilization.
 
-- React frontend with role-based employee, driver, and admin workspaces
-- FastAPI backend with JWT authentication
-- PostgreSQL/PostGIS schema for companies, users, vans, ride requests, trips, analytics, and notifications
-- Employee booking for immediate or scheduled rides
-- Smarter trip assignment that pools rides by destination proximity and pickup fit
-- Driver endpoints for dashboard, active trip lookup, location updates, and status updates
-- Admin endpoints and forms for dashboard metrics, vans, employees, drivers, and trips
-- Google Maps-powered route previews and live map surfaces across employee, driver, and admin views
-- OpenAI-powered copilot briefings and role-aware operator Q&A
-- Grounded AI copilot signals: health score, confidence level, evidence signals, and one-click quick prompts
-- Docker Compose stack for frontend, backend, and PostGIS
+## What We Are Building
 
-## Product direction
+The platform unifies:
 
-This platform is for corporate campuses or business parks that want to replace static shuttles with demand-responsive pooling.
+- Employee ride demand (instant + scheduled)
+- Driver execution workflow (accept trip, pickup, dropoff, complete)
+- Admin operations control (fleet, trips, alerts, users)
+- Realtime live updates and map views
+- AI copilots that explain state and recommend actions (advisory only)
 
-- Employees should be able to request immediate or scheduled rides
-- Drivers should see their assigned van and current workload
-- Admins should track readiness, demand, and fleet availability
-- Matching, routing, realtime updates, and frontend apps are the next phases
+## Flow Charts
 
-## Quick start
+### 1. End-to-End Platform Loop
 
-1. Start the stack.
+```mermaid
+flowchart LR
+    E["Employee requests ride"] --> M["Matcher evaluates pool and new trip options"]
+    M --> A["Assign ride to trip and van"]
+    A --> D["Driver executes pickup and dropoff flow"]
+    D --> R["Realtime events update all dashboards"]
+    R --> O["Admin monitors and intervenes on alerts"]
+    O --> M
+```
+
+### 2. Ride Lifecycle State Flow
+
+```mermaid
+flowchart LR
+    RQ["requested"] --> MG["matching"]
+    MG --> MT["matched"]
+    MT --> EN["driver_en_route"]
+    EN --> AP["arrived_at_pickup"]
+    AP --> PU["picked_up"]
+    PU --> IT["in_transit"]
+    IT --> AD["arrived_at_destination"]
+    AD --> DO["dropped_off"]
+    DO --> CP["completed"]
+
+    MG --> FNC["failed_no_capacity"]
+    EN --> FDU["failed_driver_unreachable"]
+    MG --> FOI["failed_operational_issue"]
+    RQ --> CE["cancelled_by_employee"]
+    MT --> CA["cancelled_by_admin"]
+    AP --> NS["no_show"]
+    MT --> RS["reassigned"]
+```
+
+### 3. Matching Decision Flow
+
+```mermaid
+flowchart TD
+    S["New ride enters matching window"] --> P{"Pool candidate exists"}
+    P -- Yes --> C{"Capacity and detour limits pass"}
+    C -- Yes --> PA["Pool into existing trip"]
+    C -- No --> NV["Find best van for new trip"]
+    P -- No --> NV
+    NV --> V{"Eligible van available"}
+    V -- Yes --> NT["Create new trip and assign ride"]
+    V -- No --> Q["Keep pending and raise admin alert"]
+```
+
+## Personas (Who This Product Serves)
+
+### 1. Employee Persona - "Daily Commuter"
+
+- **Who**: Corporate employee commuting between home, office, or approved hubs.
+- **Goal**: Get to destination on time with minimal friction and uncertainty.
+- **Pain points**:
+  - Fixed shuttle timings do not match real daily schedules.
+  - No clear ETA or confidence on pickup timing.
+  - Repetitive manual booking for common routes.
+- **Needs from platform**:
+  - Quick booking (immediate or scheduled)
+  - Live van location and ride status
+  - Clear cancellation and notification flow
+
+### 2. Driver Persona - "Route Executor"
+
+- **Who**: Assigned fleet driver responsible for safe, timely pickups/dropoffs.
+- **Goal**: Execute assigned route cleanly with minimal operational confusion.
+- **Pain points**:
+  - Unclear stop sequence during dynamic pooling.
+  - Manual coordination with ops when demand changes.
+  - GPS sharing issues causing dispatch confusion.
+- **Needs from platform**:
+  - Single active trip board
+  - Next-stop clarity with one-tap lifecycle actions
+  - Reliable live location publishing and exception reporting
+
+### 3. Admin Persona - "Fleet Operations Manager" (Primary Persona)
+
+- **Who**: Ops lead managing demand, fleet readiness, exceptions, and SLA performance.
+- **Goal**: Keep service reliable while maximizing van utilization and reducing idle capacity.
+- **Pain points**:
+  - Hard to detect demand-supply imbalance early.
+  - Delayed visibility into stale GPS or dispatch failures.
+  - Fragmented systems for users, trips, alerts, and fleet state.
+- **Needs from platform**:
+  - Realtime operations dashboard
+  - Alert-driven intervention tools
+  - Control over users, fleet, and trip orchestration
+  - AI summaries for faster decisions during high load
+
+## Primary Persona Flow (Admin)
+
+The admin experience is the operational center of the product:
+
+1. Monitor live fleet and demand signals.
+2. Detect risk states (unmatched requests, stale vans, delayed pickups).
+3. Intervene via reassignment/cancellation/communication.
+4. Confirm ride lifecycle and trip completion health.
+5. Use copilot insights to prioritize the next operational action.
+
+This admin loop is the main business value driver for enterprise adoption.
+
+## Current Scope
+
+- React frontend with role-based Employee, Driver, and Admin workspaces
+- FastAPI backend with JWT auth and company-scoped access
+- SQLite local mode and Postgres/PostGIS Docker mode
+- Employee ride booking (immediate + scheduled)
+- Matching and pooling logic with configurable dispatch parameters
+- Driver dashboard, trip actions, status, and location updates
+- Admin dashboard with fleet/trips/requests/users and notifications
+- Google Maps route preview + live map surfaces
+- OpenAI role-aware copilot briefings and Q&A
+- Alembic migration workflow
+
+## Architecture Snapshot
+
+- **Frontend**: React + Vite + role-based routing
+- **Backend**: FastAPI + SQLAlchemy + Alembic
+- **Realtime**: live stream/event-driven UI updates
+- **AI**: OpenAI-backed copilots per role
+- **Maps**:
+  - Backend uses Google Maps APIs for routing/geocoding
+  - Frontend uses Google Maps JavaScript API for map rendering/autocomplete
+
+## Quick Start (Docker)
 
 ```bash
 docker-compose up --build
-```
-
-2. Load demo data for test users and vans.
-
-```bash
 docker-compose exec backend python scripts/seed_data.py
 ```
 
-3. Open the apps.
+Open:
 
 - Frontend: `http://localhost:5173`
-- Swagger UI: `http://localhost:8000/docs`
-- Health check: `http://localhost:8000/health`
+- API docs: `http://localhost:8000/docs`
+- Health: `http://localhost:8000/health`
 
-## API keys for the upgraded experience
+## Local Run (Without Docker)
 
-- Set `OPENAI_API_KEY` to enable role-aware copilot briefings and Q&A.
-- Set `GOOGLE_MAPS_API_KEY` for backend routing and geocoding.
-- Set `GOOGLE_MAPS_BROWSER_API_KEY` for the frontend live maps. In development you can reuse the same key if your Google Cloud restrictions allow it.
-- Optionally set `GOOGLE_MAPS_MAP_ID` to apply a custom Google map style.
+1. Ensure Python venv + frontend dependencies are installed.
+2. Start both backend and frontend:
 
-## Local run without Docker
+```powershell
+./run-local.ps1
+```
 
-If Docker is unavailable, the backend now defaults to a local SQLite database.
+3. Stop local services:
 
-1. Create a virtual environment and install backend packages.
-2. Run [run-local.ps1](C:\Users\Parth bansal\Desktop\van-pooling-platform\run-local.ps1)
-3. Stop services with [stop-local.ps1](C:\Users\Parth bansal\Desktop\van-pooling-platform\stop-local.ps1)
+```powershell
+./stop-local.ps1
+```
 
-## Database migrations (Alembic)
+## Environment Variables (Important)
 
-The backend now uses Alembic as the canonical schema workflow.
+- `OPENAI_API_KEY`: enables copilot features
+- `GOOGLE_MAPS_API_KEY`: backend routing/geocoding
+- `GOOGLE_MAPS_BROWSER_API_KEY`: frontend map rendering
+- `VITE_GOOGLE_MAPS_API_KEY`: frontend browser key (used by Vite)
+- `GOOGLE_MAPS_MAP_ID` / `VITE_GOOGLE_MAPS_MAP_ID`: optional map styling
+- `AUTO_RUN_MIGRATIONS=true`: runs Alembic upgrades on startup
 
-- Startup auto-upgrades schema when `AUTO_RUN_MIGRATIONS=true` (default).
-- Manual migration command:
+## Database Migrations (Alembic)
+
+Manual migration:
 
 ```powershell
 cd backend
 ..\.venv\Scripts\python.exe -m scripts.migrate
 ```
 
-- Create a new revision after model changes:
+Create revision:
 
 ```powershell
 cd backend
 ..\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe_change"
 ```
 
-- Apply pending revisions:
+Upgrade:
 
 ```powershell
 cd backend
 ..\.venv\Scripts\python.exe -m alembic upgrade head
 ```
 
-- Use a temporary database URL during migration generation/testing:
-
-```powershell
-cd backend
-..\.venv\Scripts\python.exe -m alembic -x db_url=sqlite:///./temp_migration.db upgrade head
-```
-
-## API summary
+## API Summary
 
 ### Auth
 
@@ -101,20 +210,14 @@ cd backend
 - `POST /api/v1/auth/login`
 - `GET /api/v1/auth/me`
 
-`/auth/register` can bootstrap a new tenant admin when `company_name` is provided for a new `company_domain`.
-
 ### Employee
 
-- Sign in and request a ride
-- View live assignment details and recent ride history
 - `POST /api/v1/rides/request`
 - `GET /api/v1/rides/history`
 - `GET /api/v1/rides/active`
 
 ### Driver
 
-- Use the frontend to update van status and location
-- Start trips, pick up passengers, and complete dropoffs
 - `GET /api/v1/driver/dashboard`
 - `GET /api/v1/driver/trips/active`
 - `POST /api/v1/driver/location`
@@ -126,8 +229,6 @@ cd backend
 
 ### Admin
 
-- Monitor fleet, people, and trip flow from the operations UI
-- Create new employees, drivers, admins, and vans from the frontend
 - `GET /api/v1/admin/dashboard`
 - `GET /api/v1/admin/kpis?window=today|7d|30d`
 - `GET /api/v1/admin/sla`
@@ -139,38 +240,23 @@ cd backend
 - `POST /api/v1/admin/users`
 - `POST /api/v1/admin/vans`
 
-## Database
-
-`database/init/` creates the full operational schema:
-
-- `companies`
-- `users`
-- `vans`
-- `ride_requests`
-- `trips`
-- `trip_passengers`
-- `analytics_events`
-- `notifications`
-
-Sample demo data is available in `database/seeds/` and can be loaded with the seed script above.
-
-## Seeded users
+## Seeded Users (Demo)
 
 - Admin: `admin@techcorp.com`
 - Driver: `driver1@techcorp.com`
 - Employee: `john.doe@techcorp.com`
 - Password: `password123`
 
-## Next build targets
+## Handoff / Planning Docs
 
-1. Add websocket transport on top of the current SSE live stream for lower-latency fleet updates.
-2. Expand rider and admin notification delivery using the existing notification schema.
-3. Add automated tests across backend routes and frontend role workflows.
-4. Add richer admin dispatch controls such as manual reassignment and service-zone editing.
+- [stages-roadmap.md](./stages-roadmap.md)
+- [agent-build-playbook.md](./agent-build-playbook.md)
+- [docs/icp.md](./docs/icp.md)
+- [docs/kpi-definitions.md](./docs/kpi-definitions.md)
 
-## Execution handoff docs
+## Next Build Targets
 
-- [stages-roadmap.md](C:\Users\Parth bansal\Desktop\van-pooling-platform\stages-roadmap.md)
-- [agent-build-playbook.md](C:\Users\Parth bansal\Desktop\van-pooling-platform\agent-build-playbook.md)
-- [docs/icp.md](C:\Users\Parth bansal\Desktop\van-pooling-platform\docs\icp.md)
-- [docs/kpi-definitions.md](C:\Users\Parth bansal\Desktop\van-pooling-platform\docs\kpi-definitions.md)
+1. Deepen dispatch controls (manual reassignment + richer incident tooling)
+2. Expand notification channels and delivery reliability
+3. Increase test coverage for end-to-end role workflows
+4. Harden observability, SLO tracking, and tenant security boundaries
