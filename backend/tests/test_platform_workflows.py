@@ -33,6 +33,25 @@ def _ride_payload(*, scheduled_time: str | None = None) -> dict:
     }
 
 
+def _recurring_schedule_payload(*, timezone: str = "Asia/Kolkata") -> dict:
+    return {
+        "name": "Weekday commute",
+        "weekdays": [0, 1, 2, 3, 4],
+        "pickup_time_local": "08:30",
+        "timezone": timezone,
+        "pickup": {
+            "address": "Koramangala Bangalore",
+            "latitude": 12.9716,
+            "longitude": 77.5946,
+        },
+        "destination": {
+            "address": "TechCorp Office Whitefield Bangalore",
+            "latitude": 12.9800,
+            "longitude": 77.6000,
+        },
+    }
+
+
 def test_auth_login_and_role_gate(client, seeded_data):
     response = client.post(
         f"{settings.API_V1_STR}/auth/login",
@@ -179,6 +198,7 @@ def test_immediate_ride_lifecycle_end_to_end(client, auth_headers, seeded_data):
     ride = request_response.json()
     assert ride["status"] == "matched"
     assert ride["trip_id"]
+    assert ride["boarding_otp_code"]
 
     active_trip_response = client.get(
         f"{settings.API_V1_STR}/driver/trips/active",
@@ -200,6 +220,7 @@ def test_immediate_ride_lifecycle_end_to_end(client, auth_headers, seeded_data):
     assert client.post(
         f"{settings.API_V1_STR}/driver/trips/{active_trip['id']}/pickup/{passenger_ride_id}",
         headers=driver_headers,
+        json={"otp_code": ride["boarding_otp_code"]},
     ).status_code == 200
     assert client.post(
         f"{settings.API_V1_STR}/driver/trips/{active_trip['id']}/dropoff/{passenger_ride_id}",
@@ -218,6 +239,87 @@ def test_immediate_ride_lifecycle_end_to_end(client, auth_headers, seeded_data):
     history = history_response.json()
     completed = next(item for item in history if item["id"] == ride["id"])
     assert completed["status"] == "completed"
+
+
+def test_employee_cannot_create_second_ride_until_first_completes(
+    client,
+    auth_headers,
+    seeded_data,
+):
+    employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
+    first_request = client.post(
+        f"{settings.API_V1_STR}/rides/request",
+        headers=employee_headers,
+        json=_ride_payload(),
+    )
+    assert first_request.status_code == 200, first_request.text
+    first_ride = first_request.json()
+    assert first_ride["status"] in {"matched", "matching", "requested"}
+
+    second_request = client.post(
+        f"{settings.API_V1_STR}/rides/request",
+        headers=employee_headers,
+        json=_ride_payload(),
+    )
+    assert second_request.status_code == 409, second_request.text
+    assert "already have an active ride" in second_request.json()["detail"].lower()
+
+
+def test_driver_pickup_requires_valid_boarding_otp(client, auth_headers, seeded_data):
+    employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
+    driver_headers = auth_headers(seeded_data["users"]["driver_a1"], "driver")
+
+    request_response = client.post(
+        f"{settings.API_V1_STR}/rides/request",
+        headers=employee_headers,
+        json=_ride_payload(),
+    )
+    assert request_response.status_code == 200, request_response.text
+    ride = request_response.json()
+    assert ride["trip_id"]
+    assert ride["boarding_otp_code"]
+
+    active_trip_response = client.get(
+        f"{settings.API_V1_STR}/driver/trips/active",
+        headers=driver_headers,
+    )
+    assert active_trip_response.status_code == 200, active_trip_response.text
+    active_trip = active_trip_response.json()
+    passenger_ride_id = active_trip["passengers"][0]["ride_request_id"]
+
+    assert client.post(
+        f"{settings.API_V1_STR}/driver/trips/{active_trip['id']}/accept",
+        headers=driver_headers,
+    ).status_code == 200
+    assert client.post(
+        f"{settings.API_V1_STR}/driver/trips/{active_trip['id']}/start",
+        headers=driver_headers,
+    ).status_code == 200
+
+    invalid_pickup = client.post(
+        f"{settings.API_V1_STR}/driver/trips/{active_trip['id']}/pickup/{passenger_ride_id}",
+        headers=driver_headers,
+        json={"otp_code": "0000"},
+    )
+    assert invalid_pickup.status_code == 400, invalid_pickup.text
+    assert "invalid otp" in invalid_pickup.json()["detail"].lower()
+
+    valid_pickup = client.post(
+        f"{settings.API_V1_STR}/driver/trips/{active_trip['id']}/pickup/{passenger_ride_id}",
+        headers=driver_headers,
+        json={"otp_code": ride["boarding_otp_code"]},
+    )
+    assert valid_pickup.status_code == 200, valid_pickup.text
+
+    active_ride_response = client.get(
+        f"{settings.API_V1_STR}/rides/active",
+        headers=employee_headers,
+    )
+    assert active_ride_response.status_code == 200, active_ride_response.text
+    active_ride = active_ride_response.json()
+    assert active_ride is not None
+    assert active_ride["status"] in {"picked_up", "in_transit"}
+    assert active_ride["boarding_otp_code"] is None
 
 
 def test_scheduled_ride_dispatch_window_activation(
@@ -251,6 +353,26 @@ def test_scheduled_ride_dispatch_window_activation(
         assert ride.status == RideRequestStatus.MATCHED
     finally:
         db.close()
+
+
+def test_recurring_schedule_timezone_validation(client, auth_headers, seeded_data):
+    employee_headers = auth_headers(seeded_data["users"]["employee_a"], "employee")
+
+    invalid_timezone = client.post(
+        f"{settings.API_V1_STR}/rides/schedules",
+        headers=employee_headers,
+        json=_recurring_schedule_payload(timezone="Asia"),
+    )
+    assert invalid_timezone.status_code == 400, invalid_timezone.text
+    assert "asia/kolkata" in invalid_timezone.json()["detail"].lower()
+
+    normalized_timezone = client.post(
+        f"{settings.API_V1_STR}/rides/schedules",
+        headers=employee_headers,
+        json=_recurring_schedule_payload(timezone=" Asia/Kolkata "),
+    )
+    assert normalized_timezone.status_code == 200, normalized_timezone.text
+    assert normalized_timezone.json()["timezone"] == "Asia/Kolkata"
 
 
 def test_admin_trip_reassignment_flow(client, auth_headers, seeded_data):
@@ -300,6 +422,7 @@ def test_admin_kpis_snapshot_endpoint(client, auth_headers, seeded_data):
     )
     assert first_ride_response.status_code == 200, first_ride_response.text
     first_ride = first_ride_response.json()
+    assert first_ride["boarding_otp_code"]
 
     first_trip_response = client.get(
         f"{settings.API_V1_STR}/driver/trips/active",
@@ -320,6 +443,7 @@ def test_admin_kpis_snapshot_endpoint(client, auth_headers, seeded_data):
     assert client.post(
         f"{settings.API_V1_STR}/driver/trips/{first_trip['id']}/pickup/{passenger_ride_id}",
         headers=driver_headers,
+        json={"otp_code": first_ride["boarding_otp_code"]},
     ).status_code == 200
     assert client.post(
         f"{settings.API_V1_STR}/driver/trips/{first_trip['id']}/dropoff/{passenger_ride_id}",

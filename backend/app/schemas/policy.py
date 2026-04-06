@@ -6,14 +6,16 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.common import Latitude, Longitude
+
 
 class PolicyZoneBounds(BaseModel):
     """Bounding box for pickup or destination service-zone enforcement."""
 
-    min_latitude: float | None = None
-    max_latitude: float | None = None
-    min_longitude: float | None = None
-    max_longitude: float | None = None
+    min_latitude: Latitude | None = None
+    max_latitude: Latitude | None = None
+    min_longitude: Longitude | None = None
+    max_longitude: Longitude | None = None
 
 
 class ServiceZonePolicy(BaseModel):
@@ -88,10 +90,10 @@ class PolicyViolation(BaseModel):
 class PolicySimulationRequest(BaseModel):
     """Admin payload to simulate policy behavior before go-live changes."""
 
-    pickup_latitude: float
-    pickup_longitude: float
-    destination_latitude: float
-    destination_longitude: float
+    pickup_latitude: Latitude
+    pickup_longitude: Longitude
+    destination_latitude: Latitude
+    destination_longitude: Longitude
     scheduled_time: datetime | None = None
     role: str = "employee"
     team: str | None = None

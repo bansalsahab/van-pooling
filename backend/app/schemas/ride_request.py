@@ -41,6 +41,7 @@ class RideRequestSummary(BaseModel):
     estimated_wait_minutes: int | None = None
     estimated_cost: Decimal | None = None
     dispatch_metadata: dict[str, Any] = Field(default_factory=dict)
+    boarding_otp_code: str | None = None
     trip_id: UUID | None = None
     van_id: UUID | None = None
     van_license_plate: str | None = None

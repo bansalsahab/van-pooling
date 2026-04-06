@@ -12,6 +12,7 @@ import {
   LiveStatusBadge,
   MetricPanel,
 } from "../components/common";
+import { useConfirm } from "../components/ui/ConfirmModal";
 import { useCopilot } from "../hooks/useCopilot";
 import { useLiveStream } from "../hooks/useLiveStream";
 import { api } from "../lib/api";
@@ -46,6 +47,7 @@ interface DriverLocationQueueItem {
 export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: boolean }) {
   const navigate = useNavigate();
   const { token, user } = useAuth();
+  const { confirm, ConfirmDialog } = useConfirm();
   const {
     snapshot,
     connectionState,
@@ -71,6 +73,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
     () => loadDriverLocationQueue(),
   );
   const [location, setLocation] = useState({ latitude: "", longitude: "" });
+  const [pickupOtps, setPickupOtps] = useState<Record<string, string>>({});
   const lastSentAtRef = useRef(0);
   const queueSyncInFlightRef = useRef(false);
   const locationQueueRef = useRef<DriverLocationQueueItem[]>(locationQueue);
@@ -155,6 +158,10 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
     : trip.status.includes("delay") || trip.status.includes("failed")
       ? "delayed"
       : "active";
+
+  useEffect(() => {
+    setPickupOtps({});
+  }, [trip?.id]);
 
   useEffect(() => {
     if (
@@ -270,15 +277,38 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
     await Promise.all([refresh(), refreshBrief()]);
   }
 
+  async function handlePickupPassenger(
+    rideRequestId: string,
+    passengerName?: string | null,
+  ) {
+    if (!token || !trip) {
+      return;
+    }
+    const otpCode = sanitizeOtpCode(pickupOtps[rideRequestId] || "");
+    if (otpCode.length !== 4) {
+      setShareError("Enter the passenger's 4-digit boarding OTP before pickup.");
+      return;
+    }
+    await runAction(
+      () => api.pickupPassenger(token, trip.id, rideRequestId, otpCode),
+      `Picked up ${passengerName || "passenger"}.`,
+    );
+    setPickupOtps((current) => ({ ...current, [rideRequestId]: "" }));
+  }
+
   async function handleStatusChange(status: string) {
     if (!token) {
       return;
     }
     const requiresConfirm = status === "offline" || status === "maintenance";
     if (requiresConfirm) {
-      const confirmed = window.confirm(
-        `Switch van status to ${status.replaceAll("_", " ")}? This removes you from active dispatch eligibility.`,
-      );
+      const confirmed = await confirm({
+        title: `Go ${status}?`,
+        message: `Switching your van status to "${status.replaceAll("_", " ")}" will remove you from active dispatch eligibility. Riders cannot be assigned to your vehicle.`,
+        confirmText: `Yes, go ${status}`,
+        cancelText: "Stay available",
+        variant: "warning",
+      });
       if (!confirmed) {
         return;
       }
@@ -432,11 +462,13 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
   }
 
   return (
-    <AppLayout
-      notificationUnreadCount={unreadNotifications}
-      title={operationsOnly ? "Trip Operations" : "Driver Console"}
-      subtitle={`Dispatch and fulfil trips for ${user?.name}.`}
-    >
+    <>
+      <ConfirmDialog />
+      <AppLayout
+        notificationUnreadCount={unreadNotifications}
+        title={operationsOnly ? "Trip Operations" : "Driver Console"}
+        subtitle={`Dispatch and fulfil trips for ${user?.name}.`}
+      >
       {!operationsOnly && (
         <>
           <div className="content-grid four-column driver-metric-grid">
@@ -774,6 +806,23 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                         <p>{passenger.pickup_address}</p>
                         <p>{passenger.destination_address}</p>
                       </div>
+                      {["assigned", "notified"].includes(passenger.status) && (
+                        <label className="stack compact">
+                          Boarding OTP
+                          <input
+                            inputMode="numeric"
+                            maxLength={4}
+                            onChange={(event) =>
+                              setPickupOtps((current) => ({
+                                ...current,
+                                [passenger.ride_request_id]: sanitizeOtpCode(event.target.value),
+                              }))
+                            }
+                            placeholder="Enter 4-digit OTP"
+                            value={pickupOtps[passenger.ride_request_id] || ""}
+                          />
+                        </label>
+                      )}
                       <div className="button-row wrap">
                         <span className="status-pill">{passenger.status}</span>
                         {pickupMapUrl && (
@@ -798,17 +847,15 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
                         )}
                         <button
                           className="ghost-button"
-                          disabled={!tripStarted}
+                          disabled={
+                            !tripStarted ||
+                            !["assigned", "notified"].includes(passenger.status) ||
+                            !isPickupOtpReady(pickupOtps[passenger.ride_request_id])
+                          }
                           onClick={() =>
-                            token &&
-                            void runAction(
-                              () =>
-                                api.pickupPassenger(
-                                  token,
-                                  trip.id,
-                                  passenger.ride_request_id,
-                                ),
-                              `Picked up ${passenger.passenger_name || "passenger"}.`,
+                            void handlePickupPassenger(
+                              passenger.ride_request_id,
+                              passenger.passenger_name,
                             )
                           }
                           type="button"
@@ -975,6 +1022,7 @@ export function DriverDashboard({ operationsOnly = false }: { operationsOnly?: b
         <LiveEventsPanel events={recentEvents} title="Trip event feed" />
       </div>
     </AppLayout>
+    </>
   );
 }
 
@@ -1210,6 +1258,14 @@ function parseCoordinateInput(value: string) {
   }
   const numeric = Number(normalized);
   return Number.isFinite(numeric) ? numeric : null;
+}
+
+function sanitizeOtpCode(value: string) {
+  return value.replace(/\D/g, "").slice(0, 4);
+}
+
+function isPickupOtpReady(value?: string) {
+  return sanitizeOtpCode(value || "").length === 4;
 }
 
 function formatDateTime(value: string) {

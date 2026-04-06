@@ -311,12 +311,18 @@ export const api = {
       token,
     });
   },
-  pickupPassenger(token: string, tripId: string, rideRequestId: string) {
+  pickupPassenger(
+    token: string,
+    tripId: string,
+    rideRequestId: string,
+    otpCode: string,
+  ) {
     return request<{ message: string }>(
       `/driver/trips/${tripId}/pickup/${rideRequestId}`,
       {
         method: "POST",
         token,
+        body: { otp_code: otpCode },
       },
     );
   },

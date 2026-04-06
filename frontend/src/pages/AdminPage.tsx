@@ -11,6 +11,7 @@ import {
   LiveStatusBadge,
   MetricPanel,
 } from "../components/common";
+import { useConfirm } from "../components/ui/ConfirmModal";
 import { useCopilot } from "../hooks/useCopilot";
 import { useLiveStream } from "../hooks/useLiveStream";
 import { api } from "../lib/api";
@@ -57,6 +58,7 @@ export function AdminDashboard({
 }) {
   const navigate = useNavigate();
   const { token, user } = useAuth();
+  const { confirm, ConfirmDialog } = useConfirm();
   const {
     snapshot,
     connectionState,
@@ -367,6 +369,17 @@ export function AdminDashboard({
       setError("Your admin scope cannot cancel trips.");
       return;
     }
+    
+    const confirmed = await confirm({
+      title: "Cancel this trip?",
+      message: "The trip will be cancelled and all assigned riders will be notified. This action cannot be undone.",
+      confirmText: "Yes, cancel trip",
+      cancelText: "Keep trip",
+      variant: "danger",
+    });
+    
+    if (!confirmed) return;
+    
     setMessage(null);
     setError(null);
     try {
@@ -481,12 +494,14 @@ export function AdminDashboard({
   }
 
   return (
-    <AppLayout
-      notificationUnreadCount={unreadNotifications}
-      pendingRequestCount={pendingRequests.length}
-      title="Operations Command"
-      subtitle={`A live control surface for ${user?.company_name || "your company"}.`}
-    >
+    <>
+      <ConfirmDialog />
+      <AppLayout
+        notificationUnreadCount={unreadNotifications}
+        pendingRequestCount={pendingRequests.length}
+        title="Operations Command"
+        subtitle={`A live control surface for ${user?.company_name || "your company"}.`}
+      >
       <div className="content-grid five-column">
         <MetricPanel
           label="Employees"
@@ -1563,6 +1578,7 @@ export function AdminDashboard({
         />
       )}
     </AppLayout>
+    </>
   );
 }
 

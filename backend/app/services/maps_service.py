@@ -17,6 +17,19 @@ _CACHE_TTL = timedelta(minutes=10)
 _maps_cache: dict[str, tuple[datetime, Any]] = {}
 logger = logging.getLogger(__name__)
 
+_FALLBACK_GEOCODE_INDEX = {
+    "delhi": ("Delhi, India", 28.6139, 77.2090),
+    "new delhi": ("New Delhi, Delhi, India", 28.6139, 77.2090),
+    "gurugram": ("Gurugram, Haryana, India", 28.4595, 77.0266),
+    "gurgaon": ("Gurugram, Haryana, India", 28.4595, 77.0266),
+    "noida": ("Noida, Uttar Pradesh, India", 28.5355, 77.3910),
+    "deeg": ("Deeg, Rajasthan 321203, India", 27.4725, 77.3269),
+    "cyber hub": ("DLF Cyber Hub, Gurugram, Haryana, India", 28.4961, 77.0892),
+    "dlf tower": ("DLF Towers, Gurugram, Haryana, India", 28.4948, 77.0880),
+    "airport metro": ("Airport Metro Station, New Delhi, India", 28.5562, 77.0999),
+    "ibm tech park": ("IBM India Pvt Ltd, Gurugram, Haryana, India", 28.4944, 77.0836),
+}
+
 
 def geocode_address(address: str) -> GeocodeResponse | None:
     """Resolve an address through Google Maps when configured."""
@@ -30,7 +43,7 @@ def geocode_address(address: str) -> GeocodeResponse | None:
         return GeocodeResponse(**cached)
 
     if not settings.google_maps_enabled:
-        return None
+        return _fallback_geocode(normalized)
 
     query = parse.urlencode(
         {
@@ -44,11 +57,11 @@ def geocode_address(address: str) -> GeocodeResponse | None:
     try:
         payload = _read_json(url)
     except RuntimeError:
-        return None
+        return _fallback_geocode(normalized)
 
     results = payload.get("results") or []
     if not results:
-        return None
+        return _fallback_geocode(normalized)
 
     first = results[0]
     location = ((first.get("geometry") or {}).get("location")) or {}
@@ -61,6 +74,51 @@ def geocode_address(address: str) -> GeocodeResponse | None:
     )
     _write_cache(cache_key, geocode.model_dump(mode="json"))
     return geocode
+
+
+def _fallback_geocode(address: str) -> GeocodeResponse | None:
+    normalized = address.strip().lower()
+    if not normalized:
+        return None
+
+    coordinates = _parse_coordinate_query(normalized)
+    if coordinates is not None:
+        latitude, longitude = coordinates
+        return GeocodeResponse(
+            address=f"{latitude:.5f}, {longitude:.5f}",
+            latitude=latitude,
+            longitude=longitude,
+            source="fallback",
+        )
+
+    for key, (label, latitude, longitude) in _FALLBACK_GEOCODE_INDEX.items():
+        if normalized == key or normalized in key or key in normalized:
+            geocode = GeocodeResponse(
+                address=label,
+                latitude=latitude,
+                longitude=longitude,
+                source="fallback",
+            )
+            _write_cache(
+                f"geocode::{normalized}",
+                geocode.model_dump(mode="json"),
+            )
+            return geocode
+    return None
+
+
+def _parse_coordinate_query(value: str) -> tuple[float, float] | None:
+    parts = [segment.strip() for segment in value.split(",")]
+    if len(parts) != 2:
+        return None
+    try:
+        latitude = float(parts[0])
+        longitude = float(parts[1])
+    except ValueError:
+        return None
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        return None
+    return latitude, longitude
 
 
 def compute_route_plan(

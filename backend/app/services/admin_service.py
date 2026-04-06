@@ -77,10 +77,19 @@ def _find_company_user(db: Session, company_id, user_id) -> User:
     return user
 
 
-def _build_temporary_password(length: int = 14) -> str:
-    alphabet = string.ascii_letters + string.digits
-    password = "".join(secrets.choice(alphabet) for _ in range(length))
-    return f"{password}A1!"
+def _build_temporary_password(length: int = 24) -> str:
+    """
+    Generate a cryptographically secure temporary password.
+    
+    Uses secrets.token_urlsafe for proper randomness with guaranteed
+    complexity (letters, digits, and URL-safe special characters).
+    """
+    # Generate secure random password - token_urlsafe includes A-Z, a-z, 0-9, -, _
+    base = secrets.token_urlsafe(length)
+    # Ensure it meets complexity requirements by appending guaranteed chars
+    # This is belt-and-suspenders since token_urlsafe is already mixed
+    complexity_suffix = secrets.choice("!@#$%")
+    return f"{base[:length]}{complexity_suffix}"
 
 
 def list_company_users(db: Session, company_id) -> list[UserSummary]:

@@ -11,6 +11,7 @@ import {
   LiveStatusBadge,
   RideTable,
 } from "../components/common";
+import { useConfirm } from "../components/ui/ConfirmModal";
 import { useCopilot } from "../hooks/useCopilot";
 import { useLiveStream } from "../hooks/useLiveStream";
 import { loadGoogleMapsApi } from "../lib/googleMaps";
@@ -49,6 +50,7 @@ interface PlaceSuggestion {
 
 export function EmployeeDashboard() {
   const { token, user } = useAuth();
+  const { confirm, ConfirmDialog } = useConfirm();
   const {
     snapshot,
     connectionState,
@@ -184,6 +186,7 @@ export function EmployeeDashboard() {
   );
 
   const activeRide = snapshot?.data.active_ride ?? fallbackActiveRide;
+  const hasOpenRide = Boolean(activeRide);
   const rideHistory = snapshot?.data.ride_history ?? fallbackRideHistory;
   const notifications = snapshot?.data.notifications ?? [];
   const unreadNotifications = snapshot?.data.notifications_unread_count ?? 0;
@@ -368,6 +371,12 @@ export function EmployeeDashboard() {
   async function handleRequestRide(event: React.FormEvent) {
     event.preventDefault();
     if (!token) return;
+    if (activeRide) {
+      setError(
+        "You already have an active ride. Complete or cancel it before booking another one.",
+      );
+      return;
+    }
     const pickupLatitude = parseCoordinateInput(form.pickup_latitude);
     const pickupLongitude = parseCoordinateInput(form.pickup_longitude);
     const destinationLatitude = parseCoordinateInput(form.destination_latitude);
@@ -491,6 +500,17 @@ export function EmployeeDashboard() {
 
   async function handleCancelRide() {
     if (!token || !activeRide) return;
+    
+    const confirmed = await confirm({
+      title: "Cancel this ride?",
+      message: "Your ride will be cancelled and the van capacity will be released for other riders. This cannot be undone.",
+      confirmText: "Yes, cancel ride",
+      cancelText: "Keep ride",
+      variant: "warning",
+    });
+    
+    if (!confirmed) return;
+    
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -508,11 +528,13 @@ export function EmployeeDashboard() {
   }
 
   return (
-    <AppLayout
-      notificationUnreadCount={unreadNotifications}
-      title="Employee Ride Desk"
-      subtitle={`Book and track commute requests for ${user?.name}.`}
-    >
+    <>
+      <ConfirmDialog />
+      <AppLayout
+        notificationUnreadCount={unreadNotifications}
+        title="Employee Ride Desk"
+        subtitle={`Book and track commute requests for ${user?.name}.`}
+      >
       <div className="content-grid three-column">
         <section className="panel standout">
           <div className="panel-header">
@@ -592,6 +614,16 @@ export function EmployeeDashboard() {
                       : "Assignment in progress"
                 }
               />
+              {shouldShowBoardingOtp(activeRide.status) && (
+                <InfoRow
+                  label="Boarding OTP"
+                  value={
+                    activeRide.boarding_otp_code
+                      ? `${activeRide.boarding_otp_code} (share this with your driver at pickup)`
+                      : "Waiting for your boarding OTP."
+                  }
+                />
+              )}
               <InfoRow
                 label="ETA"
                 value={
@@ -879,8 +911,17 @@ export function EmployeeDashboard() {
             )}
             {message && <div className="success-banner">{message}</div>}
             {error && <div className="error-banner">{error}</div>}
-            <button className="primary-button" disabled={busy}>
-              {busy ? "Submitting..." : "Request pooled ride"}
+            {hasOpenRide && (
+              <div className="error-banner">
+                Complete the current ride first. Status: {activeRide?.status.replaceAll("_", " ")}.
+              </div>
+            )}
+            <button className="primary-button" disabled={busy || hasOpenRide}>
+              {busy
+                ? "Submitting..."
+                : hasOpenRide
+                  ? "Complete current ride first"
+                  : "Request pooled ride"}
             </button>
           </form>
         </section>
@@ -921,6 +962,7 @@ export function EmployeeDashboard() {
         <RideTable rides={rideHistory.slice(0, 6)} />
       </section>
     </AppLayout>
+    </>
   );
 }
 
@@ -1139,4 +1181,8 @@ function isRideCancellable(status: string) {
     "scheduled_queued",
     "matching_at_dispatch_window",
   ].includes(status);
+}
+
+function shouldShowBoardingOtp(status: string) {
+  return ["matched", "driver_en_route", "arrived_at_pickup"].includes(status);
 }

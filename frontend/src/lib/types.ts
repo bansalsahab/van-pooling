@@ -139,6 +139,7 @@ export interface RideSummary {
   estimated_wait_minutes?: number | null;
   estimated_cost?: string | number | null;
   dispatch_metadata?: DispatchDecisionMetadata;
+  boarding_otp_code?: string | null;
   trip_id?: string | null;
   van_id?: string | null;
   van_license_plate?: string | null;

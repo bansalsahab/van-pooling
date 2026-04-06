@@ -57,3 +57,9 @@ class DriverVehicleCheckSummary(BaseModel):
     source: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class DriverPickupOtpInput(BaseModel):
+    """Payload for rider pickup verification via OTP."""
+
+    otp_code: str = Field(pattern=r"^\d{4}$")

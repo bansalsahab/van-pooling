@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { api } from "../lib/api";
 import type { UserProfile } from "../lib/types";
 import { useAuth } from "../state/auth";
+import { LANDING_FOOTER_COLUMNS, PUBLIC_SOCIAL_LINKS } from "./public/content";
 
 function defaultRoute(user: UserProfile) {
   if (user.role === "employee") return "/employee";
@@ -257,13 +258,6 @@ const SECURITY_BADGES = [
   "GDPR Ready",
   "Data Encrypted at Rest",
   "Multi-tenant Isolated",
-];
-
-const FOOTER_COLUMNS = [
-  { heading: "Product", links: ["Features", "Pricing", "Changelog", "Roadmap"] },
-  { heading: "Company", links: ["About", "Blog", "Careers", "Press"] },
-  { heading: "Legal", links: ["Privacy", "Terms", "Security", "GDPR"] },
-  { heading: "Support", links: ["Docs", "Status", "Contact"] },
 ];
 
 const LANDING_SECTIONS = [
@@ -1082,31 +1076,30 @@ export function AuthPage() {
           </div>
         </section>
 
-        <section className="landing-section final-cta reveal-on-scroll" id="final-cta">
+      </main>
+
+      <footer className="landing-footer" id="contact">
+        <section className="final-cta reveal-on-scroll" id="final-cta">
           <div className="cta-route-lines" />
           <div className="cta-content">
             <h2>Ready to replace your shuttle schedule?</h2>
             <div className="landing-hero-actions">
-              <a className="primary-button" href="#contact">
+              <Link className="primary-button" to="/contact">
                 Request a Demo
-              </a>
-              <a className="secondary-button" href="#contact">
+              </Link>
+              <Link className="secondary-button" to="/contact">
                 Talk to Sales
-              </a>
+              </Link>
             </div>
           </div>
         </section>
-      </main>
-
-      <section className="landing-security-bar reveal-on-scroll">
-        {SECURITY_BADGES.map((badge) => (
-          <span className="security-pill" key={badge}>
-            {badge}
-          </span>
-        ))}
-      </section>
-
-      <footer className="landing-footer" id="contact">
+        <section className="landing-security-bar reveal-on-scroll">
+          {SECURITY_BADGES.map((badge) => (
+            <span className="security-pill" key={badge}>
+              {badge}
+            </span>
+          ))}
+        </section>
         <div className="footer-top">
           <div className="footer-brand-block">
             <div className="landing-brand">
@@ -1117,19 +1110,21 @@ export function AuthPage() {
               Demand-responsive commuter operations for employees, drivers, and fleet admins.
             </p>
             <div className="footer-socials">
-              <a href="#">LinkedIn</a>
-              <a href="#">X</a>
-              <a href="#">GitHub</a>
+              {PUBLIC_SOCIAL_LINKS.map((social) => (
+                <Link key={social.path} to={social.path}>
+                  {social.label}
+                </Link>
+              ))}
             </div>
           </div>
           <div className="footer-link-grid">
-            {FOOTER_COLUMNS.map((column) => (
+            {LANDING_FOOTER_COLUMNS.map((column) => (
               <div key={column.heading}>
                 <h4>{column.heading}</h4>
                 <ul>
                   {column.links.map((link) => (
-                    <li key={link}>
-                      <a href="#">{link}</a>
+                    <li key={link.path}>
+                      <Link to={link.path}>{link.label}</Link>
                     </li>
                   ))}
                 </ul>

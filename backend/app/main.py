@@ -5,9 +5,12 @@ import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.database import check_database_connection, init_db
 from app.services.dispatch_worker import dispatch_worker_loop, run_startup_recovery
 from app.services.domain_profile_service import register_domain_profiling_middleware
@@ -26,15 +29,35 @@ app = FastAPI(
     description=settings.DESCRIPTION,
 )
 
+# Add rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 register_domain_profiling_middleware(app)
+
+# CORS configuration with restricted methods for security
+# Note: CSRF protection is inherent in this architecture because:
+# 1. JWT tokens are stored in localStorage (not cookies)
+# 2. Authorization header must be explicitly set by JavaScript
+# 3. Browsers don't automatically send localStorage tokens cross-origin
+# For additional protection, we restrict CORS origins and methods.
+ALLOWED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+ALLOWED_HEADERS = [
+    "Authorization",
+    "Content-Type",
+    "Accept",
+    "Origin",
+    "X-Requested-With",
+    "X-SCIM-Token",
+]
 
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=ALLOWED_METHODS,
+        allow_headers=ALLOWED_HEADERS,
     )
 
 app.include_router(api_router, prefix=settings.API_V1_STR)

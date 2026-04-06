@@ -179,7 +179,12 @@ def profiling_snapshot(
         require_admin_permissions(AdminPermission.DASHBOARD_READ)
     ),
 ) -> DomainProfilingSnapshot:
-    """Return runtime request profiling across employee, driver, and admin domains."""
+    """
+    Return runtime request profiling across employee, driver, and admin domains.
+    
+    NOTE: This returns platform-wide metrics (not company-scoped) as it measures
+    API performance across all requests. This is intentional for platform operators.
+    """
     _ = current_user
     return snapshot_domain_profiles()
 

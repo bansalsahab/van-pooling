@@ -1,13 +1,25 @@
 """Application configuration."""
 import json
+import secrets
+import warnings
 from pathlib import Path
 from typing import Any
 
-from pydantic import AnyHttpUrl, Field, field_validator
+from pydantic import AnyHttpUrl, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 ROOT_ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
+
+# Weak secrets that should never be used in production
+WEAK_SECRETS = {
+    "dev-secret-change-me",
+    "secret",
+    "password",
+    "changeme",
+    "CHANGE_ME_GENERATE_A_SECURE_KEY",
+    "",
+}
 
 
 class Settings(BaseSettings):
@@ -30,6 +42,8 @@ class Settings(BaseSettings):
         default_factory=lambda: [
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            "http://localhost:7357",
+            "http://127.0.0.1:7357",
             "http://localhost",
         ]
     )
@@ -37,13 +51,14 @@ class Settings(BaseSettings):
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str = "vanpool"
-    POSTGRES_PASSWORD: str = "vanpool123"
+    POSTGRES_PASSWORD: str = Field(default="vanpool_dev_only")
     POSTGRES_DB: str = "vanpool_db"
     DATABASE_URL: str | None = "sqlite:///./vanpool.db"
 
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    JWT_SECRET_KEY: str = "dev-secret-change-me"
+    # JWT_SECRET_KEY must be explicitly set - no insecure default
+    JWT_SECRET_KEY: str = Field(default="")
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -87,7 +102,7 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
 
     ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    DEBUG: bool = False  # Default to False for security - must explicitly enable
     LOG_LEVEL: str = "INFO"
 
     DEFAULT_VAN_CAPACITY: int = 8
@@ -150,6 +165,48 @@ class Settings(BaseSettings):
     @property
     def openai_enabled(self) -> bool:
         return bool(self.OPENAI_API_KEY)
+
+    @model_validator(mode="after")
+    def validate_security_settings(self) -> "Settings":
+        """Validate security-critical settings."""
+        # Check JWT secret
+        if not self.JWT_SECRET_KEY or self.JWT_SECRET_KEY.lower() in WEAK_SECRETS:
+            if self.ENVIRONMENT == "production":
+                raise ValueError(
+                    "JWT_SECRET_KEY must be set to a secure value in production. "
+                    "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+                )
+            # Auto-generate for development only
+            self.JWT_SECRET_KEY = secrets.token_urlsafe(64)
+            warnings.warn(
+                "JWT_SECRET_KEY not configured - using auto-generated key. "
+                "This is only acceptable for development.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        # Minimum secret length check
+        if len(self.JWT_SECRET_KEY) < 32:
+            if self.ENVIRONMENT == "production":
+                raise ValueError(
+                    "JWT_SECRET_KEY must be at least 32 characters in production."
+                )
+            warnings.warn(
+                f"JWT_SECRET_KEY is only {len(self.JWT_SECRET_KEY)} characters. "
+                "Use at least 32 characters for security.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        # Warn about debug mode
+        if self.DEBUG and self.ENVIRONMENT == "production":
+            warnings.warn(
+                "DEBUG is enabled in production environment. This is a security risk!",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        return self
 
 
 settings = Settings()

@@ -3,6 +3,9 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
+# Security & Rate Limiting
+slowapi==0.1.9
+
 # Database
 sqlalchemy==2.0.23
 geoalchemy2==0.14.2
@@ -13,6 +16,7 @@ alembic==1.12.1
 pydantic==2.5.0
 pydantic-settings==2.1.0
 email-validator==2.1.0
+tzdata==2025.3
 
 # Authentication
 python-jose[cryptography]==3.3.0

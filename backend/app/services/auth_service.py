@@ -27,6 +27,12 @@ from app.schemas.user import (
     UserProfile,
     UserProfileUpdate,
 )
+from app.services.lockout_service import (
+    is_account_locked,
+    get_lockout_remaining_seconds,
+    record_failed_login,
+    record_successful_login,
+)
 
 
 def _normalize_notification_preferences(
@@ -83,17 +89,39 @@ def serialize_user(user: User) -> UserProfile:
 
 def authenticate_user(db: Session, email: str, password: str) -> User:
     """Validate login credentials and return the user."""
-    user = db.scalar(select(User).where(User.email == email.lower()))
+    email_lower = email.lower()
+    
+    # Check if account is locked
+    if is_account_locked(email_lower):
+        remaining = get_lockout_remaining_seconds(email_lower)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Account temporarily locked due to too many failed login attempts. "
+                   f"Try again in {remaining // 60} minutes.",
+        )
+    
+    user = db.scalar(select(User).where(User.email == email_lower))
     if not user or not verify_password(password, user.password_hash):
+        # Record failed attempt and check if now locked
+        if record_failed_login(email_lower):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Account temporarily locked due to too many failed login attempts. "
+                       "Try again in 15 minutes.",
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password.",
         )
+    
     if user.status != UserStatus.ACTIVE:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account is not active.",
         )
+    
+    # Clear failed attempts on successful login
+    record_successful_login(email_lower)
     return user
 
 

@@ -20,6 +20,7 @@ from app.models.van import Van, VanStatus
 from app.schemas.common import MessageResponse
 from app.schemas.dashboard import DriverDashboardSummary
 from app.schemas.driver_ops import (
+    DriverPickupOtpInput,
     DriverShiftStartInput,
     DriverShiftSummary,
     DriverVehicleCheckCreate,
@@ -39,6 +40,7 @@ from app.services.driver_ops_service import (
 from app.services.dashboard_service import get_driver_dashboard, serialize_driver_trip
 from app.services.lifecycle_service import TRIP_ACTIVE_STATUSES, close_trip, synchronize_trip_lifecycle
 from app.services.notification_service import queue_notification_once
+from app.services.ride_service import BOARDING_OTP_CODE_KEY, BOARDING_OTP_VERIFIED_AT_KEY
 from app.services.routing_service import rebuild_trip_route
 
 router = APIRouter(prefix="/driver", tags=["driver"])
@@ -93,6 +95,12 @@ def _ride_event_name_for_status(status: RideRequestStatus) -> str:
         RideRequestStatus.ARRIVED_AT_DESTINATION: "ride.arrived_at_destination",
         RideRequestStatus.DROPPED_OFF: "ride.dropped_off",
     }.get(status, "ride.status_changed")
+
+
+def _coerce_dispatch_metadata(raw: object) -> dict[str, object]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    return {}
 
 
 def _notify_ride_transition(
@@ -475,6 +483,7 @@ def accept_trip(
 def pickup_passenger(
     trip_id: UUID,
     ride_request_id: UUID,
+    payload: DriverPickupOtpInput,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.DRIVER)),
 ) -> MessageResponse:
@@ -493,12 +502,32 @@ def pickup_passenger(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Passenger assignment not found.",
         )
+    if assignment.status in {PassengerStatus.PICKED_UP, PassengerStatus.DROPPED_OFF}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Passenger is already picked up or dropped off.",
+        )
+
+    metadata = _coerce_dispatch_metadata(assignment.ride_request.dispatch_metadata)
+    expected_otp = metadata.get(BOARDING_OTP_CODE_KEY)
+    if not isinstance(expected_otp, str) or len(expected_otp) != 4 or not expected_otp.isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Boarding OTP is unavailable for this ride. Ask dispatch to rematch the ride.",
+        )
+    if payload.otp_code != expected_otp:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid OTP. Ask the rider to share the 4-digit boarding code.",
+        )
 
     previous_ride_status = assignment.ride_request.status.value
     assignment.status = PassengerStatus.PICKED_UP
     assignment.actual_pickup_time = datetime.utcnow()
     assignment.ride_request.status = RideRequestStatus.PICKED_UP
     assignment.ride_request.actual_pickup_time = assignment.actual_pickup_time
+    metadata[BOARDING_OTP_VERIFIED_AT_KEY] = assignment.actual_pickup_time.isoformat()
+    assignment.ride_request.dispatch_metadata = metadata
 
     synchronize_trip_lifecycle(trip)
     rebuild_trip_route(db, trip)
@@ -512,7 +541,11 @@ def pickup_passenger(
         trip_id=trip.id,
         from_state=previous_ride_status,
         to_state=assignment.ride_request.status.value,
-        metadata={"passenger_name": assignment.user.name if assignment.user else None},
+        metadata={
+            "passenger_name": assignment.user.name if assignment.user else None,
+            "boarding_otp_verified": True,
+            "boarding_otp_verified_at": assignment.actual_pickup_time.isoformat(),
+        },
     )
     if trip.status.value != previous_trip_status:
         record_dispatch_event(

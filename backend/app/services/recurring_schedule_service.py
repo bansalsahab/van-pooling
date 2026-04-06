@@ -29,6 +29,7 @@ from app.services.policy_service import (
     resolve_user_team,
 )
 from app.services.service_zone_service import point_allowed_in_active_zones
+from app.services.lifecycle_service import RIDE_OPEN_STATUSES
 
 
 def _parse_status(value: str) -> RecurringRideRuleStatus:
@@ -88,13 +89,24 @@ def _parse_pickup_time(value: str) -> time:
         ) from exc
 
 
+def _normalize_timezone(value: str) -> str:
+    normalized = str(value or "").strip().replace(" ", "_")
+    if not normalized:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Timezone is required for recurring schedule.",
+        )
+    return normalized
+
+
 def _resolve_timezone(value: str) -> ZoneInfo:
+    normalized = _normalize_timezone(value)
     try:
-        return ZoneInfo(value)
+        return ZoneInfo(normalized)
     except ZoneInfoNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid timezone value for recurring schedule.",
+            detail="Invalid timezone value for recurring schedule. Use values like Asia/Kolkata.",
         ) from exc
 
 
@@ -123,6 +135,17 @@ def _next_pickup_for_rule(
         if pickup_utc > reference_utc:
             return pickup_utc, local_date
     return None, None
+
+
+def _user_has_open_ride(db: Session, user_id, company_id) -> bool:
+    ride = db.scalars(
+        select(RideRequest.id).where(
+            RideRequest.user_id == user_id,
+            RideRequest.company_id == company_id,
+            RideRequest.status.in_(list(RIDE_OPEN_STATUSES)),
+        )
+    ).first()
+    return ride is not None
 
 
 def serialize_recurring_rule(
@@ -180,7 +203,8 @@ def create_user_recurring_rule(
     """Create recurring weekday schedule for a user."""
     weekdays = _format_weekdays(payload.weekdays)
     _parse_pickup_time(payload.pickup_time_local)
-    _resolve_timezone(payload.timezone)
+    timezone_name = _normalize_timezone(payload.timezone)
+    _resolve_timezone(timezone_name)
     rule = RecurringRideRule(
         user_id=user.id,
         company_id=user.company_id,
@@ -188,7 +212,7 @@ def create_user_recurring_rule(
         status=RecurringRideRuleStatus.ACTIVE,
         weekdays=weekdays,
         pickup_time_local=payload.pickup_time_local,
-        timezone=payload.timezone,
+        timezone=timezone_name,
         pickup_address=payload.pickup.address,
         pickup_latitude=payload.pickup.latitude,
         pickup_longitude=payload.pickup.longitude,
@@ -231,8 +255,9 @@ def update_user_recurring_rule(
         _parse_pickup_time(payload.pickup_time_local)
         rule.pickup_time_local = payload.pickup_time_local
     if "timezone" in fields and payload.timezone is not None:
-        _resolve_timezone(payload.timezone)
-        rule.timezone = payload.timezone
+        timezone_name = _normalize_timezone(payload.timezone)
+        _resolve_timezone(timezone_name)
+        rule.timezone = timezone_name
     if "status" in fields and payload.status is not None:
         rule.status = _parse_status(payload.status)
     if "pickup" in fields and payload.pickup is not None:
@@ -276,6 +301,8 @@ def materialize_due_recurring_rides(db: Session, *, now: datetime | None = None)
 
         rider = db.get(User, rule.user_id)
         if rider is None:
+            continue
+        if _user_has_open_ride(db, rider.id, rider.company_id):
             continue
 
         company_policy = get_company_policy(db, rider.company_id)

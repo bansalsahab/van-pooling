@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from secrets import randbelow
 from typing import Any
 from uuid import UUID
 
@@ -63,6 +64,19 @@ REJECTION_REASON_MESSAGES = {
     "driver_missing": "Van does not have a driver assigned.",
     "van_full": "Van is already at full capacity.",
 }
+BOARDING_OTP_CODE_KEY = "boarding_otp_code"
+BOARDING_OTP_GENERATED_AT_KEY = "boarding_otp_generated_at"
+BOARDING_OTP_VERIFIED_AT_KEY = "boarding_otp_verified_at"
+BOARDING_OTP_VISIBLE_STATUSES = {
+    RideRequestStatus.MATCHED,
+    RideRequestStatus.DRIVER_EN_ROUTE,
+    RideRequestStatus.ARRIVED_AT_PICKUP,
+}
+BOARDING_OTP_UNIQUE_STATUS_SCOPE = {
+    RideRequestStatus.MATCHED,
+    RideRequestStatus.DRIVER_EN_ROUTE,
+    RideRequestStatus.ARRIVED_AT_PICKUP,
+}
 
 
 def _point(longitude: float, latitude: float):
@@ -79,6 +93,83 @@ def _round_metric(value: float | None, digits: int = 4) -> float | None:
     if value is None:
         return None
     return round(value, digits)
+
+
+def _coerce_dispatch_metadata(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    return {}
+
+
+def _is_valid_boarding_otp(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 4 and value.isdigit()
+
+
+def _resolve_boarding_otp_for_summary(ride: RideRequest) -> str | None:
+    if ride.status not in BOARDING_OTP_VISIBLE_STATUSES:
+        return None
+    metadata = _coerce_dispatch_metadata(ride.dispatch_metadata)
+    otp = metadata.get(BOARDING_OTP_CODE_KEY)
+    otp_verified_at = metadata.get(BOARDING_OTP_VERIFIED_AT_KEY)
+    if otp_verified_at:
+        return None
+    return otp if _is_valid_boarding_otp(otp) else None
+
+
+def _generate_boarding_otp_code() -> str:
+    """
+    Generate a 4-digit boarding OTP code.
+    
+    Security note: OTPs are stored in plaintext because:
+    1. With only 10,000 possibilities, hashing provides minimal security
+    2. OTPs have a short validity window (ride lifecycle)
+    3. OTPs are unique per-company to prevent collisions
+    4. Verification uses constant-time comparison
+    
+    Future improvement: Use 6-digit OTPs or alphanumeric codes for better entropy.
+    """
+    return f"{randbelow(9000) + 1000:04d}"
+
+
+def _generate_unique_boarding_otp(db: Session, ride: RideRequest) -> str:
+    existing_codes: set[str] = set()
+    active_rides = db.scalars(
+        select(RideRequest).where(
+            RideRequest.company_id == ride.company_id,
+            RideRequest.id != ride.id,
+            RideRequest.status.in_(list(BOARDING_OTP_UNIQUE_STATUS_SCOPE)),
+        )
+    ).all()
+    for active_ride in active_rides:
+        metadata = _coerce_dispatch_metadata(active_ride.dispatch_metadata)
+        otp = metadata.get(BOARDING_OTP_CODE_KEY)
+        otp_verified_at = metadata.get(BOARDING_OTP_VERIFIED_AT_KEY)
+        if _is_valid_boarding_otp(otp) and not otp_verified_at:
+            existing_codes.add(otp)
+
+    for _ in range(250):
+        candidate = _generate_boarding_otp_code()
+        if candidate not in existing_codes:
+            return candidate
+    return _generate_boarding_otp_code()
+
+
+def _ensure_boarding_otp(
+    db: Session,
+    ride: RideRequest,
+    decision_metadata: dict[str, Any] | None = None,
+) -> str:
+    metadata = (
+        decision_metadata
+        if decision_metadata is not None
+        else _coerce_dispatch_metadata(ride.dispatch_metadata)
+    )
+    otp = _generate_unique_boarding_otp(db, ride)
+    metadata[BOARDING_OTP_CODE_KEY] = otp
+    metadata[BOARDING_OTP_GENERATED_AT_KEY] = _utc_now().isoformat()
+    metadata.pop(BOARDING_OTP_VERIFIED_AT_KEY, None)
+    ride.dispatch_metadata = metadata
+    return otp
 
 
 def _resolve_matching_policy(db: Session, company_id) -> dict[str, Any]:
@@ -256,6 +347,7 @@ def serialize_ride_request(ride: RideRequest) -> RideRequestSummary:
         estimated_wait_minutes=ride.estimated_wait_minutes,
         estimated_cost=ride.estimated_cost,
         dispatch_metadata=ride.dispatch_metadata or {},
+        boarding_otp_code=_resolve_boarding_otp_for_summary(ride),
         trip_id=trip.id if trip else None,
         van_id=van.id if van else None,
         van_license_plate=van.license_plate if van else None,
@@ -785,6 +877,7 @@ def _attach_assignment_to_trip(
 
 
 def _notify_ride_assignment(db: Session, ride: RideRequest, trip: Trip) -> None:
+    boarding_otp = _resolve_boarding_otp_for_summary(ride)
     if ride.user_id is not None:
         queue_notification(
             db,
@@ -792,6 +885,7 @@ def _notify_ride_assignment(db: Session, ride: RideRequest, trip: Trip) -> None:
             title="Ride assigned",
             message=(
                 f"Your ride is now linked to van {trip.van.license_plate if trip.van else 'the assigned vehicle'}."
+                + (f" Share OTP {boarding_otp} at pickup to verify boarding." if boarding_otp else "")
             ),
             metadata={"ride_id": str(ride.id), "trip_id": str(trip.id)},
         )
@@ -826,8 +920,7 @@ def _assign_ride_to_trip(
     )
     trip.van.status = VanStatus.ON_TRIP
     ride.status = RideRequestStatus.MATCHED
-    if decision_metadata is not None:
-        ride.dispatch_metadata = decision_metadata
+    _ensure_boarding_otp(db, ride, decision_metadata=decision_metadata)
     db.add_all([assignment, trip.van, trip, ride])
     db.flush()
     synchronize_trip_lifecycle(trip)
@@ -894,8 +987,7 @@ def _create_trip_for_ride(
     van.current_occupancy = min(van.capacity, (van.current_occupancy or 0) + 1)
     van.status = VanStatus.ON_TRIP
     ride.status = RideRequestStatus.MATCHED
-    if decision_metadata is not None:
-        ride.dispatch_metadata = decision_metadata
+    _ensure_boarding_otp(db, ride, decision_metadata=decision_metadata)
 
     db.add_all([trip, assignment, van, ride])
     db.flush()
@@ -1055,6 +1147,25 @@ def create_ride_request(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User is not attached to a company.",
+        )
+
+    existing_open_ride = db.scalars(
+        select(RideRequest)
+        .where(
+            RideRequest.user_id == current_user.id,
+            RideRequest.company_id == current_user.company_id,
+            RideRequest.status.in_(list(RIDE_OPEN_STATUSES)),
+        )
+        .order_by(desc(RideRequest.requested_at))
+    ).first()
+    if existing_open_ride is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "You already have an active ride. "
+                f"Current status: {existing_open_ride.status.value.replace('_', ' ')}. "
+                "Complete or cancel it before booking another ride."
+            ),
         )
 
     pickup_point = _point(payload.pickup.longitude, payload.pickup.latitude)

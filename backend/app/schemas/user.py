@@ -1,8 +1,10 @@
 """User schemas."""
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from typing import Literal
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from typing import Annotated, Literal
+
+from app.schemas.common import Latitude, Longitude
 
 
 AdminScopeValue = Literal["supervisor", "dispatcher", "viewer", "support"]
@@ -41,11 +43,11 @@ class UserProfile(UserSummary):
     )
     must_reset_password: bool = False
     home_address: str | None = None
-    home_latitude: float | None = None
-    home_longitude: float | None = None
+    home_latitude: Latitude | None = None
+    home_longitude: Longitude | None = None
     default_destination_address: str | None = None
-    default_destination_latitude: float | None = None
-    default_destination_longitude: float | None = None
+    default_destination_latitude: Latitude | None = None
+    default_destination_longitude: Longitude | None = None
 
 
 class AdminUserCreate(BaseModel):
@@ -85,15 +87,21 @@ class UserProfileUpdate(BaseModel):
     phone: str | None = Field(default=None, max_length=20)
     notification_preferences: NotificationPreferences | None = None
     home_address: str | None = None
-    home_latitude: float | None = None
-    home_longitude: float | None = None
+    home_latitude: Latitude | None = None
+    home_longitude: Longitude | None = None
     default_destination_address: str | None = None
-    default_destination_latitude: float | None = None
-    default_destination_longitude: float | None = None
+    default_destination_latitude: Latitude | None = None
+    default_destination_longitude: Longitude | None = None
 
 
 class UserPasswordChangeRequest(BaseModel):
     """Payload for changing a signed-in user's password."""
 
-    current_password: str = Field(min_length=8, max_length=128)
-    new_password: str = Field(min_length=8, max_length=128)
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=12, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def check_new_password_strength(cls, v: str) -> str:
+        from app.schemas.auth import validate_password_strength
+        return validate_password_strength(v)

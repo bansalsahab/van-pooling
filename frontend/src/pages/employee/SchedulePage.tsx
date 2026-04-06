@@ -21,6 +21,16 @@ const WEEKDAY_OPTIONS = [
   { value: 5, label: "Sat" },
   { value: 6, label: "Sun" },
 ];
+const FALLBACK_TIMEZONE = "Asia/Kolkata";
+const COMMON_TIMEZONE_OPTIONS = [
+  "UTC",
+  "Asia/Kolkata",
+  "Asia/Dubai",
+  "Asia/Singapore",
+  "Europe/London",
+  "America/New_York",
+  "America/Los_Angeles",
+];
 
 function toNumberOrFallback(value: string, fallback: number) {
   const parsed = Number(value);
@@ -33,9 +43,49 @@ function weekdaySummary(values: number[]) {
     .join(", ");
 }
 
+function normalizeTimezoneValue(value: string) {
+  return value.trim().replace(/\s+/g, "_");
+}
+
+function isValidIanaTimezone(value: string) {
+  if (!value) {
+    return false;
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveDefaultTimezone() {
+  const browserTimezone = normalizeTimezoneValue(
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+  );
+  if (isValidIanaTimezone(browserTimezone)) {
+    return browserTimezone;
+  }
+  return FALLBACK_TIMEZONE;
+}
+
+function listTimezoneOptions(defaultTimezone: string) {
+  const intlWithSupportedValues = Intl as typeof Intl & {
+    supportedValuesOf?: (key: string) => string[];
+  };
+  const fromRuntime =
+    typeof intlWithSupportedValues.supportedValuesOf === "function"
+      ? intlWithSupportedValues.supportedValuesOf("timeZone")
+      : [];
+  const values = new Set([defaultTimezone, ...COMMON_TIMEZONE_OPTIONS, ...fromRuntime]);
+  return Array.from(values).filter((item) => isValidIanaTimezone(item)).sort();
+}
+
 export function EmployeeSchedulePage() {
   const { token, user } = useAuth();
   const { snapshot } = useLiveStream<EmployeeLiveSnapshot>(token);
+  const [defaultTimezone] = useState(() => resolveDefaultTimezone());
+  const timezoneOptions = useMemo(() => listTimezoneOptions(defaultTimezone), [defaultTimezone]);
   const [rules, setRules] = useState<RecurringRideRuleSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -46,7 +96,7 @@ export function EmployeeSchedulePage() {
     name: "Weekday commute",
     weekdays: [0, 1, 2, 3, 4],
     pickup_time_local: "08:00",
-    timezone: "Asia/Kolkata",
+    timezone: defaultTimezone,
     pickup: {
       address: user?.home_address || "",
       latitude: user?.home_latitude || 12.9716,
@@ -164,9 +214,19 @@ export function EmployeeSchedulePage() {
     setBusy(true);
     setError(null);
     setMessage(null);
+    const normalizedTimezone = normalizeTimezoneValue(form.timezone);
+    if (!isValidIanaTimezone(normalizedTimezone)) {
+      setBusy(false);
+      setError("Select a valid timezone like Asia/Kolkata.");
+      return;
+    }
     try {
-      await api.createRecurringSchedule(token, form);
+      await api.createRecurringSchedule(token, {
+        ...form,
+        timezone: normalizedTimezone,
+      });
       setMessage("Recurring schedule created.");
+      setForm((current) => ({ ...current, timezone: normalizedTimezone }));
       await refreshRules();
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Could not create schedule.");
@@ -272,12 +332,28 @@ export function EmployeeSchedulePage() {
           <label>
             Timezone
             <input
+              list="timezone-options"
               value={form.timezone}
               onChange={(event) =>
-                setForm((current) => ({ ...current, timezone: event.target.value }))
+                setForm((current) => ({
+                  ...current,
+                  timezone: normalizeTimezoneValue(event.target.value),
+                }))
               }
+              onBlur={() => {
+                const normalized = normalizeTimezoneValue(form.timezone);
+                if (normalized === form.timezone) {
+                  return;
+                }
+                setForm((current) => ({ ...current, timezone: normalized }));
+              }}
               required
             />
+            <datalist id="timezone-options">
+              {timezoneOptions.map((timezone) => (
+                <option key={timezone} value={timezone} />
+              ))}
+            </datalist>
           </label>
           <div className="stack compact">
             <p className="eyebrow">Weekdays</p>

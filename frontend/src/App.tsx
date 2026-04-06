@@ -26,6 +26,8 @@ import { EmployeeHistoryPage } from "./pages/employee/HistoryPage";
 import { EmployeeNotificationsPage } from "./pages/employee/NotificationsPage";
 import { EmployeePassesPage } from "./pages/employee/PassesPage";
 import { EmployeeSchedulePage } from "./pages/employee/SchedulePage";
+import { PublicInfoPage } from "./pages/public/PublicInfoPage";
+import { PUBLIC_ROUTE_CONFIG } from "./pages/public/content";
 
 function AuthenticatedRoute() {
   const { user } = useAuth();
@@ -59,6 +61,13 @@ export default function App() {
         path="/"
         element={user ? <Navigate to={defaultRoute(user)} replace /> : <AuthPage />}
       />
+      {PUBLIC_ROUTE_CONFIG.map((publicRoute) => (
+        <Route
+          key={publicRoute.path}
+          path={publicRoute.path}
+          element={<PublicInfoPage pageKey={publicRoute.pageKey} />}
+        />
+      ))}
       <Route element={<AuthenticatedRoute />}>
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/help" element={<HelpPage />} />

@@ -1,8 +1,9 @@
 """Authentication routes."""
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.rate_limit import limiter, AUTH_RATE_LIMIT, SSO_RATE_LIMIT, SCIM_RATE_LIMIT
 from app.database import get_db
 from app.models.user import User
 from app.schemas.common import MessageResponse
@@ -27,13 +28,23 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=TokenResponse)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> TokenResponse:
+@limiter.limit(AUTH_RATE_LIMIT)
+def register(
+    request: Request,
+    payload: RegisterRequest,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
     """Register a user or bootstrap a new tenant admin."""
     return register_user(db, payload)
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+@limiter.limit(AUTH_RATE_LIMIT)
+def login(
+    request: Request,
+    payload: LoginRequest,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
     """Login with an email and password."""
     return login_user(db, payload)
 
@@ -66,7 +77,9 @@ def change_my_password(
 
 
 @router.post("/enterprise/sso/start", response_model=EnterpriseSSOStartResponse)
+@limiter.limit(SSO_RATE_LIMIT)
 def enterprise_sso_start(
+    request: Request,
     payload: EnterpriseSSOStartRequest,
     db: Session = Depends(get_db),
 ) -> EnterpriseSSOStartResponse:
@@ -75,7 +88,9 @@ def enterprise_sso_start(
 
 
 @router.post("/enterprise/scim/sync", response_model=SCIMSyncHookResponse)
+@limiter.limit(SCIM_RATE_LIMIT)
 def enterprise_scim_sync(
+    request: Request,
     payload: SCIMSyncHookRequest,
     x_scim_token: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
