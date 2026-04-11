@@ -58,10 +58,19 @@ export default function ConsoleScreen() {
     refetchInterval: 10000,
   });
 
+  const shiftsQuery = useQuery({
+    queryKey: ['driver', 'shifts', 'console'],
+    queryFn: () => backend.getDriverShifts(accessToken!, 10),
+    enabled: Boolean(accessToken),
+    refetchInterval: 15000,
+  });
+
   const startShiftMutation = useMutation({
     mutationFn: () => backend.startDriverShift(accessToken!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['driver'] });
+      queryClient.invalidateQueries({ queryKey: ['driver', 'shifts'] });
+      Alert.alert('Shift started', 'You are now clocked in and ready for dispatch.');
     },
     onError: (error) => {
       Alert.alert('Shift Error', error instanceof Error ? error.message : 'Could not start shift');
@@ -124,6 +133,11 @@ export default function ConsoleScreen() {
 
   const dashboard = dashboardQuery.data;
   const activeTrip = activeTripQuery.data;
+  const shifts = shiftsQuery.data ?? [];
+  const activeShift = shifts.find((shift) => (
+    shift.status === 'clocked_in'
+    && !shift.ended_at
+  ));
   const nextAction = inferNextAction(activeTrip);
   const targetPassenger = findActionablePassenger(activeTrip ?? undefined, nextAction);
   const pickupOtpReady = pickupOtp.trim().length === 4;
@@ -149,9 +163,9 @@ export default function ConsoleScreen() {
     return dashboard?.assigned_van;
   }, [dashboard]);
 
-  const isOnShift = Boolean(dashboard?.current_shift_id || activeTrip);
-  const hasQueryError = dashboardQuery.isError || activeTripQuery.isError;
-  const queryError = dashboardQuery.error ?? activeTripQuery.error ?? notificationsQuery.error;
+  const isOnShift = Boolean(activeShift || activeTrip);
+  const hasQueryError = dashboardQuery.isError || activeTripQuery.isError || shiftsQuery.isError;
+  const queryError = dashboardQuery.error ?? activeTripQuery.error ?? shiftsQuery.error ?? notificationsQuery.error;
   const queryErrorMessage = queryError instanceof Error
     ? queryError.message
     : 'Could not sync live dashboard data.';
@@ -171,12 +185,14 @@ export default function ConsoleScreen() {
               dashboardQuery.isRefetching
               || activeTripQuery.isRefetching
               || notificationsQuery.isRefetching
+              || shiftsQuery.isRefetching
             }
             onRefresh={() => {
               dashboardQuery.refetch();
               activeTripQuery.refetch();
               briefQuery.refetch();
               notificationsQuery.refetch();
+              shiftsQuery.refetch();
             }}
             tintColor="#06C167"
           />
@@ -209,6 +225,15 @@ export default function ConsoleScreen() {
           </View>
         </View>
 
+        {activeShift && (
+          <View style={styles.shiftInfoCard}>
+            <Ionicons name="time-outline" size={16} color="#1D9E75" />
+            <Text style={styles.shiftInfoText}>
+              Shift active since {new Date(activeShift.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </Text>
+          </View>
+        )}
+
         {hasQueryError && (
           <View style={styles.errorCard}>
             <View style={styles.errorRow}>
@@ -222,6 +247,7 @@ export default function ConsoleScreen() {
                 dashboardQuery.refetch();
                 activeTripQuery.refetch();
                 notificationsQuery.refetch();
+                shiftsQuery.refetch();
               }}
             >
               <Text style={styles.errorRetryText}>Retry sync</Text>
@@ -452,8 +478,7 @@ function inferNextAction(trip?: DriverTripSummary | null): DriverNextAction {
   if (explicit === 'complete') return 'complete';
 
   const value = String(trip?.status ?? '').toLowerCase();
-  if (value === 'dispatch_ready') return 'accept';
-  if (value === 'planned') return 'start';
+  if (value === 'dispatch_ready' || value === 'planned') return 'accept';
   if (value === 'active_to_pickup' || value === 'active_mixed') return 'pickup';
   if (value === 'active_in_transit') return 'dropoff';
   return 'complete';
@@ -596,6 +621,24 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontSize: 13,
     marginTop: 4,
+  },
+  shiftInfoCard: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(29,158,117,0.45)',
+    backgroundColor: 'rgba(29,158,117,0.15)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  shiftInfoText: {
+    color: '#A7F3D0',
+    fontSize: 12,
+    fontWeight: '600',
   },
   errorCard: {
     marginHorizontal: 16,
