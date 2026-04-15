@@ -1,5 +1,7 @@
 # VanPool Mobile - React Native Setup
 
+{% raw %}
+
 ## Quick Start
 
 ### Option 1: Use Expo (Recommended for beginners)
@@ -915,3 +917,5 @@ pnpm dev --host
 4. Add to Home Screen for app-like experience!
 
 This works immediately with no extra setup needed.
+
+{% endraw %}
