@@ -189,11 +189,15 @@ This repository now deploys only `new frontend` via:
 
 Set these GitHub repository variables before deploying:
 
-- `VITE_API_URL` (public backend URL, e.g. `https://api.yourdomain.com/api/v1`)
+- `VITE_API_URL` (public backend URL, must NOT be localhost, e.g. `https://api.yourdomain.com/api/v1`)
 - `VITE_GOOGLE_MAPS_API_KEY`
 - `VITE_GOOGLE_MAPS_MAP_ID`
 
 Then run the workflow manually from Actions, or push changes under `new frontend/`.
+
+For backend CORS, allow your GitHub Pages origin:
+
+- `https://bansalsahab.github.io`
 
 ## Local Run (Without Docker)
 

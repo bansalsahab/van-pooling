@@ -51,16 +51,30 @@ import type {
 function resolveApiBaseUrl(): string {
   const configured = import.meta.env.VITE_API_URL?.trim();
   if (configured) {
-    return configured;
+    return configured.replace(/\/+$/, "");
+  }
+
+  const hostname = window.location.hostname || "localhost";
+  if (hostname.endsWith("github.io")) {
+    return "";
   }
 
   // Use current hostname so LAN access works (e.g. 192.168.x.x:5173 -> 192.168.x.x:8000).
   const protocol = window.location.protocol === "https:" ? "https:" : "http:";
-  const hostname = window.location.hostname || "localhost";
   return `${protocol}//${hostname}:8000/api/v1`;
 }
 
 const API_BASE_URL = resolveApiBaseUrl();
+
+function requireApiBaseUrl(): string {
+  if (API_BASE_URL) {
+    return API_BASE_URL;
+  }
+
+  throw new Error(
+    "Backend URL is not configured for this deployment. Set VITE_API_URL in GitHub repository variables and redeploy.",
+  );
+}
 
 type HttpMethod = "GET" | "POST" | "PUT";
 
@@ -72,9 +86,10 @@ async function request<T>(
     body?: unknown;
   } = {},
 ): Promise<T> {
+  const baseUrl = requireApiBaseUrl();
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(`${baseUrl}${path}`, {
       method: options.method ?? "GET",
       headers: {
         "Content-Type": "application/json",
@@ -154,10 +169,12 @@ function describeErrorValue(value: unknown): string | null {
 
 export const api = {
   getLiveStreamUrl(token: string) {
-    return `${API_BASE_URL}/live/stream?access_token=${encodeURIComponent(token)}`;
+    const baseUrl = requireApiBaseUrl();
+    return `${baseUrl}/live/stream?access_token=${encodeURIComponent(token)}`;
   },
   getLiveWebSocketUrl(token: string) {
-    const url = new URL(`${API_BASE_URL}/live/ws`, window.location.origin);
+    const baseUrl = requireApiBaseUrl();
+    const url = new URL(`${baseUrl}/live/ws`, window.location.origin);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("access_token", token);
     return url.toString();

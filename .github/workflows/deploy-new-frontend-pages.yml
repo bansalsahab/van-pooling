@@ -39,6 +39,14 @@ jobs:
       - name: Compute base path
         run: echo "VITE_BASE_PATH=/${GITHUB_REPOSITORY#*/}/" >> "$GITHUB_ENV"
 
+      - name: Validate backend URL variable
+        run: |
+          if [ -z "${{ vars.VITE_API_URL }}" ]; then
+            echo "Missing repository variable VITE_API_URL."
+            echo "Set it to your public backend URL, for example: https://api.example.com/api/v1"
+            exit 1
+          fi
+
       - name: Install dependencies
         working-directory: "new frontend"
         run: npm ci
