@@ -181,6 +181,20 @@ Stop dev stack:
 docker compose -f docker-compose.dev.yml down
 ```
 
+## Deploy New Frontend (GitHub Pages)
+
+This repository now deploys only `new frontend` via:
+
+- `.github/workflows/deploy-new-frontend-pages.yml`
+
+Set these GitHub repository variables before deploying:
+
+- `VITE_API_URL` (public backend URL, e.g. `https://api.yourdomain.com/api/v1`)
+- `VITE_GOOGLE_MAPS_API_KEY`
+- `VITE_GOOGLE_MAPS_MAP_ID`
+
+Then run the workflow manually from Actions, or push changes under `new frontend/`.
+
 ## Local Run (Without Docker)
 
 1. Ensure Python venv + frontend dependencies are installed.
