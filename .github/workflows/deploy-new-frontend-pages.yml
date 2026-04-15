@@ -39,12 +39,14 @@ jobs:
       - name: Compute base path
         run: echo "VITE_BASE_PATH=/${GITHUB_REPOSITORY#*/}/" >> "$GITHUB_ENV"
 
-      - name: Validate backend URL variable
+      - name: Validate optional deployment env
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL || secrets.VITE_API_URL }}
+          VITE_GOOGLE_MAPS_API_KEY: ${{ vars.VITE_GOOGLE_MAPS_API_KEY || secrets.VITE_GOOGLE_MAPS_API_KEY }}
+          VITE_GOOGLE_MAPS_MAP_ID: ${{ vars.VITE_GOOGLE_MAPS_MAP_ID || secrets.VITE_GOOGLE_MAPS_MAP_ID }}
         run: |
-          if [ -z "${{ vars.VITE_API_URL }}" ]; then
-            echo "Missing repository variable VITE_API_URL."
-            echo "Set it to your public backend URL, for example: https://api.example.com/api/v1"
-            exit 1
+          if [ -z "$VITE_API_URL" ]; then
+            echo "::warning::VITE_API_URL is not set (variable or secret). Deploy will succeed, but backend calls from Pages will fail."
           fi
 
       - name: Install dependencies
@@ -54,9 +56,9 @@ jobs:
       - name: Build app
         working-directory: "new frontend"
         env:
-          VITE_API_URL: ${{ vars.VITE_API_URL }}
-          VITE_GOOGLE_MAPS_API_KEY: ${{ vars.VITE_GOOGLE_MAPS_API_KEY }}
-          VITE_GOOGLE_MAPS_MAP_ID: ${{ vars.VITE_GOOGLE_MAPS_MAP_ID }}
+          VITE_API_URL: ${{ vars.VITE_API_URL || secrets.VITE_API_URL }}
+          VITE_GOOGLE_MAPS_API_KEY: ${{ vars.VITE_GOOGLE_MAPS_API_KEY || secrets.VITE_GOOGLE_MAPS_API_KEY }}
+          VITE_GOOGLE_MAPS_MAP_ID: ${{ vars.VITE_GOOGLE_MAPS_MAP_ID || secrets.VITE_GOOGLE_MAPS_MAP_ID }}
         run: npm run build
 
       - name: Disable Jekyll processing

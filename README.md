@@ -187,7 +187,7 @@ This repository now deploys only `new frontend` via:
 
 - `.github/workflows/deploy-new-frontend-pages.yml`
 
-Set these GitHub repository variables before deploying:
+Set these GitHub Actions repository variables (or secrets) before deploying:
 
 - `VITE_API_URL` (public backend URL, must NOT be localhost, e.g. `https://api.yourdomain.com/api/v1`)
 - `VITE_GOOGLE_MAPS_API_KEY`
