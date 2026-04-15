@@ -1,9 +1,9 @@
-name: vanpool-platform
+name: vanpool-platform-dev
 
 services:
   postgres:
     image: postgis/postgis:15-3.3
-    container_name: vanpool-postgres
+    container_name: vanpool-postgres-dev
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-vanpool}
@@ -12,7 +12,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_dev:/var/lib/postgresql/data
       - ./database/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vanpool} -d ${POSTGRES_DB:-vanpool_db}"]
@@ -20,30 +20,29 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - vanpool-network
+      - vanpool-dev-network
 
   redis:
     image: redis:7-alpine
-    container_name: vanpool-redis
+    container_name: vanpool-redis-dev
     restart: unless-stopped
-    command: redis-server --save 60 1 --loglevel warning
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
+      - redis_data_dev:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 10
     networks:
-      - vanpool-network
+      - vanpool-dev-network
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: vanpool-backend
+    container_name: vanpool-backend-dev
     restart: unless-stopped
     environment:
       POSTGRES_HOST: postgres
@@ -69,48 +68,46 @@ services:
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost}
       AUTO_RUN_MIGRATIONS: ${AUTO_RUN_MIGRATIONS:-true}
       ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: "true"
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)\""]
-      interval: 15s
-      timeout: 5s
-      retries: 10
     networks:
-      - vanpool-network
+      - vanpool-dev-network
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_API_URL: /api/v1
-        VITE_GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_BROWSER_API_KEY:-}
-        VITE_GOOGLE_MAPS_MAP_ID: ${GOOGLE_MAPS_MAP_ID:-}
-    container_name: vanpool-frontend
+    image: node:22-alpine
+    container_name: vanpool-frontend-dev
     restart: unless-stopped
+    working_dir: /app
+    environment:
+      VITE_API_URL: http://localhost:8000/api/v1
+      VITE_GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_BROWSER_API_KEY:-}
+      VITE_GOOGLE_MAPS_MAP_ID: ${GOOGLE_MAPS_MAP_ID:-}
+      CHOKIDAR_USEPOLLING: "true"
     ports:
-      - "5173:80"
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules_dev:/app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
     depends_on:
-      backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
+      - backend
     networks:
-      - vanpool-network
+      - vanpool-dev-network
 
 volumes:
-  postgres_data:
-  redis_data:
+  postgres_data_dev:
+  redis_data_dev:
+  frontend_node_modules_dev:
 
 networks:
-  vanpool-network:
+  vanpool-dev-network:
     driver: bridge

@@ -145,8 +145,9 @@ This admin loop is the main business value driver for enterprise adoption.
 ## Quick Start (Docker)
 
 ```bash
-docker-compose up --build
-docker-compose exec backend python scripts/seed_data.py
+cp .env.example .env
+docker compose up --build -d
+docker compose exec backend python scripts/seed_data.py
 ```
 
 Open:
@@ -154,6 +155,31 @@ Open:
 - Frontend: `http://localhost:5173`
 - API docs: `http://localhost:8000/docs`
 - Health: `http://localhost:8000/health`
+
+Stop containers:
+
+```bash
+docker compose down
+```
+
+## Docker Dev Mode (Hot Reload)
+
+```bash
+cp .env.example .env
+docker compose -f docker-compose.dev.yml up --build
+```
+
+Seed demo data (new terminal):
+
+```bash
+docker compose -f docker-compose.dev.yml exec backend python scripts/seed_data.py
+```
+
+Stop dev stack:
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
 
 ## Local Run (Without Docker)
 
