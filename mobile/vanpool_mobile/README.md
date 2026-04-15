@@ -1,16 +1,41 @@
-# vanpool_mobile
+# VanPool Mobile App
 
-A new Flutter project.
+React Native mobile app for the Van Pooling Platform.
 
-## Getting Started
+## Setup
 
-This project is a starting point for a Flutter application.
+1. Install dependencies:
+```bash
+cd mobile/vanpool_mobile
+npm install
+```
 
-A few resources to get you started if this is your first Flutter project:
+2. For iOS (macOS only):
+```bash
+cd ios && pod install && cd ..
+npx react-native run-ios
+```
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+3. For Android:
+```bash
+npx react-native run-android
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Project Structure
+
+```
+src/
+├── api/          # API client and types
+├── store/        # Zustand state management
+├── screens/      # Screen components
+│   ├── auth/     # Login screens
+│   ├── employee/ # Employee role screens
+│   ├── driver/   # Driver role screens
+│   └── admin/    # Admin role screens
+├── components/   # Reusable components
+└── navigation/   # React Navigation setup
+```
+
+## Configuration
+
+Update the API base URL in `src/api/backend.ts` to point to your backend server.

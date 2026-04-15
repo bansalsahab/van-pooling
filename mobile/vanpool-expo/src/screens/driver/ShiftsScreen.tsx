@@ -49,7 +49,7 @@ function ShiftItem({ shift }: { shift: DriverShiftSummary }) {
 
       {duration && (
         <View style={styles.durationRow}>
-          <Ionicons name="time-outline" size={16} color="#666" />
+          <Ionicons name="time-outline" size={16} color="#64748B" />
           <Text style={styles.durationText}>
             {Math.floor(duration / 60)}h {duration % 60}m
           </Text>

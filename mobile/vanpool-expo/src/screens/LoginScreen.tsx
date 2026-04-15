@@ -158,12 +158,14 @@ export default function LoginScreen() {
               <TouchableOpacity
                 style={[styles.modeButton, mode === 'signin' && { backgroundColor: '#0E7490' }]}
                 onPress={() => handleModeChange('signin')}
+                activeOpacity={0.7}
               >
                 <Text style={[styles.modeText, mode === 'signin' && styles.modeTextActive]}>Sign In</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modeButton, mode === 'register' && { backgroundColor: '#0E7490' }]}
                 onPress={() => handleModeChange('register')}
+                activeOpacity={0.7}
               >
                 <Text style={[styles.modeText, mode === 'register' && styles.modeTextActive]}>Register</Text>
               </TouchableOpacity>
@@ -181,6 +183,7 @@ export default function LoginScreen() {
                     role === value && { backgroundColor: `${ROLE_ACCENT[value]}33`, borderColor: ROLE_ACCENT[value] },
                   ]}
                   onPress={() => setRole(value)}
+                  activeOpacity={0.7}
                 >
                   <Text style={[styles.roleButtonText, role === value && { color: '#E2E8F0' }]}>
                     {value.charAt(0).toUpperCase() + value.slice(1)}
@@ -263,6 +266,7 @@ export default function LoginScreen() {
               style={[styles.submitButton, { backgroundColor: accent }, loading && styles.submitButtonDisabled]}
               onPress={handleSubmit}
               disabled={loading}
+              activeOpacity={0.8}
             >
               {loading ? (
                 <ActivityIndicator color="#fff" />

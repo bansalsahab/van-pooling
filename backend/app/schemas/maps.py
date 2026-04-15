@@ -64,6 +64,27 @@ class GeocodeResponse(BaseModel):
     source: Literal["google_maps", "fallback"]
 
 
+class GeocodeSuggestionRequest(BaseModel):
+    """Payload for maps autocomplete suggestions."""
+
+    query: str = Field(min_length=2, max_length=200)
+    limit: int = Field(default=5, ge=1, le=10)
+
+
+class GeocodeSuggestion(BaseModel):
+    """Single autocomplete suggestion."""
+
+    description: str
+    place_id: str | None = None
+    source: Literal["google_maps", "fallback"]
+
+
+class GeocodeSuggestionResponse(BaseModel):
+    """Autocomplete response wrapper."""
+
+    suggestions: list[GeocodeSuggestion] = Field(default_factory=list)
+
+
 class RoutePreviewRequest(BaseModel):
     """Preview a route between user-selected points."""
 

@@ -1,12 +1,18 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 
 import { useAuthStore } from '../../store/authStore';
 import { backend } from '../../api/backend';
+import LiveMap from '../../components/LiveMap';
+import LiveEventsPanel, { LiveEvent } from '../../components/LiveEventsPanel';
+import { useLiveStream } from '../../hooks/useLiveStream';
+import type { RideSummary } from '../../api/types';
+import { LoadingSpinner, ErrorDisplay } from '../../components/UIComponents';
+import { colors, spacing, borderRadius, typography } from '../../theme';
 
 function normalizeStatus(status?: string) {
   if (!status) return 'unknown';
@@ -17,6 +23,7 @@ export default function HomeScreen() {
   const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   const navigation = useNavigation<any>();
+  const queryClient = useQueryClient();
 
   const dashboardQuery = useQuery({
     queryKey: ['employee', 'dashboard'],
@@ -37,6 +44,56 @@ export default function HomeScreen() {
     queryFn: () => backend.getNotifications(accessToken!, { limit: 20 }),
     enabled: Boolean(accessToken),
     refetchInterval: 15000,
+  });
+
+  const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
+
+  const handleRideUpdate = useCallback((updatedRide: unknown) => {
+    queryClient.setQueryData(['employee', 'activeRide'], updatedRide);
+    const ride = updatedRide as RideSummary;
+    if (ride?.status) {
+      const statusMessages: Record<string, string> = {
+        matched: 'Driver assigned to your ride',
+        driver_en_route: 'Driver is on the way',
+        arrived_at_pickup: 'Driver has arrived',
+        picked_up: 'You have been picked up',
+        in_transit: 'Ride in progress',
+        arrived_at_destination: 'Approaching destination',
+        dropped_off: 'You have been dropped off',
+      };
+      const message = statusMessages[ride.status] || `Ride status: ${ride.status.replace(/_/g, ' ')}`;
+      setLiveEvents((prev) => [
+        {
+          id: `${Date.now()}-${Math.random()}`,
+          type: 'ride.updated',
+          message,
+          timestamp: new Date().toISOString(),
+          severity: 'info',
+        },
+        ...prev.slice(0, 19),
+      ]);
+    }
+  }, [queryClient]);
+
+  const handleNotification = useCallback((notification: unknown) => {
+    const notif = notification as { title?: string; message?: string };
+    if (notif?.message) {
+      setLiveEvents((prev) => [
+        {
+          id: `${Date.now()}-${Math.random()}`,
+          type: 'notification.created',
+          message: notif.message || 'New notification',
+          timestamp: new Date().toISOString(),
+          severity: 'info',
+        },
+        ...prev.slice(0, 19),
+      ]);
+    }
+  }, []);
+
+  const liveStream = useLiveStream(accessToken, {
+    onRideUpdate: handleRideUpdate,
+    onNotification: handleNotification,
   });
 
   const dashboard = dashboardQuery.data;
@@ -77,30 +134,57 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>{dashboard?.active_count || 0}</Text>
-            <Text style={styles.statLabel}>Active rides</Text>
+        {dashboardQuery.isLoading ? (
+          <View style={styles.loadingStats}>
+            <ActivityIndicator color={colors.primary} />
           </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>{dashboard?.pending_count || 0}</Text>
-            <Text style={styles.statLabel}>Pending requests</Text>
+        ) : dashboardQuery.isError ? (
+          <TouchableOpacity style={styles.errorStats} onPress={() => dashboardQuery.refetch()}>
+            <Text style={styles.errorStatsText}>Failed to load stats. Tap to retry.</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.statsRow}>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{dashboard?.active_count || 0}</Text>
+              <Text style={styles.statLabel}>Active rides</Text>
+            </View>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{dashboard?.pending_count || 0}</Text>
+              <Text style={styles.statLabel}>Pending requests</Text>
+            </View>
           </View>
-        </View>
+        )}
 
         <View style={styles.quickActionsRow}>
-          <TouchableOpacity style={styles.quickActionCard} onPress={() => navigation.navigate('Book')}>
+          <TouchableOpacity 
+            style={styles.quickActionCard} 
+            onPress={() => navigation.navigate('Book')}
+            activeOpacity={0.7}
+          >
             <Ionicons name="car-sport-outline" size={18} color="#00B4D8" />
             <Text style={styles.quickActionTitle}>Book now</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickActionCard} onPress={() => navigation.navigate('RecurringRides')}>
+          <TouchableOpacity 
+            style={styles.quickActionCard} 
+            onPress={() => navigation.navigate('RecurringRides')}
+            activeOpacity={0.7}
+          >
             <Ionicons name="calendar-outline" size={18} color="#1D9E75" />
             <Text style={styles.quickActionTitle}>Schedule rides</Text>
           </TouchableOpacity>
         </View>
 
-        {activeRide ? (
-          <TouchableOpacity style={styles.activeRideCard} onPress={() => navigation.navigate('TrackRide')}>
+        {activeRideQuery.isLoading ? (
+          <View style={styles.loadingCard}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={styles.loadingText}>Loading your ride...</Text>
+          </View>
+        ) : activeRide ? (
+          <TouchableOpacity 
+            style={styles.activeRideCard} 
+            onPress={() => navigation.navigate('TrackRide')}
+            activeOpacity={0.8}
+          >
             <View style={styles.activeRideHeader}>
               <View style={styles.livePill}>
                 <View style={styles.liveDot} />
@@ -108,16 +192,18 @@ export default function HomeScreen() {
               </View>
               <Text style={styles.activeRideStatus}>{normalizeStatus(activeRide.status)}</Text>
             </View>
-            <Text style={styles.activeRideTitle}>Tap to track your active ride</Text>
-            <Text style={styles.activeRideRoute} numberOfLines={1}>
-              {activeRide.pickup_address}
-            </Text>
-            <Text style={styles.activeRideRoute} numberOfLines={1}>
-              {activeRide.destination_address || activeRide.dropoff_address}
-            </Text>
-            <View style={styles.activeRideMeta}>
-              <Text style={styles.metaText}>ETA {activeRide.estimated_wait_minutes ?? '--'} min</Text>
-              <Text style={styles.metaText}>{activeRide.driver_name ?? 'Driver pending'}</Text>
+            <LiveMap ride={activeRide} height={160} showUserLocation={false} />
+            <View style={styles.activeRideInfo}>
+              <Text style={styles.activeRideRoute} numberOfLines={1}>
+                {activeRide.pickup_address}
+              </Text>
+              <Text style={styles.activeRideRoute} numberOfLines={1}>
+                {activeRide.destination_address || activeRide.dropoff_address}
+              </Text>
+              <View style={styles.activeRideMeta}>
+                <Text style={styles.metaText}>ETA {activeRide.estimated_wait_minutes ?? '--'} min</Text>
+                <Text style={styles.metaText}>{activeRide.driver_name ?? 'Driver pending'}</Text>
+              </View>
             </View>
           </TouchableOpacity>
         ) : (
@@ -125,7 +211,11 @@ export default function HomeScreen() {
             <Ionicons name="car-outline" size={46} color="#334155" />
             <Text style={styles.emptyText}>No active ride</Text>
             <Text style={styles.emptyHint}>Book now or create a recurring schedule to get started.</Text>
-            <TouchableOpacity style={styles.bookInlineBtn} onPress={() => navigation.navigate('Book')}>
+            <TouchableOpacity 
+              style={styles.bookInlineBtn} 
+              onPress={() => navigation.navigate('Book')}
+              activeOpacity={0.7}
+            >
               <Text style={styles.bookInlineText}>Book a ride</Text>
             </TouchableOpacity>
           </View>
@@ -133,29 +223,53 @@ export default function HomeScreen() {
 
         <View style={styles.recentSection}>
           <Text style={styles.sectionTitle}>Recent rides</Text>
-          {(dashboard?.recent_rides ?? []).slice(0, 5).map((ride) => (
-            <TouchableOpacity key={ride.id} style={styles.rideItem} onPress={() => navigation.navigate('History')}>
-              <View style={styles.rideIcon}>
-                <Ionicons
-                  name={ride.status === 'completed' ? 'checkmark-circle' : 'time'}
-                  size={20}
-                  color={ride.status === 'completed' ? '#1D9E75' : '#F59E0B'}
-                />
-              </View>
-              <View style={styles.rideInfo}>
-                <Text style={styles.rideAddress} numberOfLines={1}>
-                  {ride.pickup_address}
-                </Text>
-                <Text style={styles.rideTime}>
-                  {new Date(ride.created_at).toLocaleDateString()}
-                </Text>
-              </View>
-              <View style={styles.rideStatusPill}>
-                <Text style={styles.rideStatusText}>{normalizeStatus(ride.status)}</Text>
-              </View>
+          {dashboardQuery.isLoading ? (
+            <View style={styles.loadingRecent}>
+              <ActivityIndicator color={colors.primary} />
+              <Text style={styles.loadingRecentText}>Loading recent rides...</Text>
+            </View>
+          ) : (dashboard?.recent_rides ?? []).length === 0 ? (
+            <TouchableOpacity style={styles.emptyRecentCard} onPress={() => navigation.navigate('Book')}>
+              <Ionicons name="car-outline" size={32} color={colors.textMuted} />
+              <Text style={styles.emptyRecentText}>No recent rides</Text>
+              <Text style={styles.emptyRecentHint}>Book your first ride to see it here.</Text>
             </TouchableOpacity>
-          ))}
+          ) : (
+            (dashboard?.recent_rides ?? []).slice(0, 5).map((ride) => (
+              <TouchableOpacity 
+                key={ride.id} 
+                style={styles.rideItem} 
+                onPress={() => navigation.navigate('History')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.rideIcon}>
+                  <Ionicons
+                    name={ride.status === 'completed' ? 'checkmark-circle' : 'time'}
+                    size={20}
+                    color={ride.status === 'completed' ? '#1D9E75' : '#F59E0B'}
+                  />
+                </View>
+                <View style={styles.rideInfo}>
+                  <Text style={styles.rideAddress} numberOfLines={1}>
+                    {ride.pickup_address}
+                  </Text>
+                  <Text style={styles.rideTime}>
+                    {new Date(ride.created_at).toLocaleDateString()}
+                  </Text>
+                </View>
+                <View style={styles.rideStatusPill}>
+                  <Text style={styles.rideStatusText}>{normalizeStatus(ride.status)}</Text>
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
         </View>
+
+        {liveStream.connectionState === 'live' && (
+          <View style={styles.liveEventsSection}>
+            <LiveEventsPanel />
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -265,13 +379,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A2E45',
     borderWidth: 1,
     borderColor: 'rgba(0,180,216,0.5)',
-    padding: 14,
-    gap: 6,
+    overflow: 'hidden',
   },
   activeRideHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 8,
   },
   livePill: {
     borderRadius: 999,
@@ -301,6 +417,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textTransform: 'capitalize',
   },
+  activeRideInfo: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 4,
+  },
   activeRideTitle: {
     color: '#E2E8F0',
     fontSize: 16,
@@ -311,7 +432,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   activeRideMeta: {
-    marginTop: 2,
+    marginTop: 4,
     flexDirection: 'row',
     gap: 12,
   },
@@ -357,6 +478,11 @@ const styles = StyleSheet.create({
   recentSection: {
     padding: 16,
     paddingTop: 6,
+    paddingBottom: 0,
+  },
+  liveEventsSection: {
+    padding: 16,
+    paddingTop: 12,
     paddingBottom: 24,
   },
   sectionTitle: {
@@ -402,5 +528,71 @@ const styles = StyleSheet.create({
     color: '#CBD5E1',
     fontSize: 11,
     textTransform: 'capitalize',
+  },
+  loadingStats: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    height: 88,
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  errorStats: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: spacing.lg,
+    backgroundColor: 'rgba(239,68,68,0.1)',
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.3)',
+    alignItems: 'center',
+  },
+  errorStatsText: {
+    color: colors.dangerLight,
+    fontSize: 13,
+  },
+  loadingCard: {
+    margin: 16,
+    padding: spacing.xxl,
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  loadingText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+  },
+  loadingRecent: {
+    padding: spacing.lg,
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  loadingRecentText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+  },
+  emptyRecentCard: {
+    padding: spacing.xl,
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  emptyRecentText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  emptyRecentHint: {
+    color: colors.textMuted,
+    fontSize: 13,
   },
 });

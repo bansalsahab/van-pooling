@@ -95,7 +95,7 @@ export default function HelpScreen() {
         <View style={styles.resourcesList}>
           <TouchableOpacity style={styles.resourceItem}>
             <View style={styles.resourceIcon}>
-              <Ionicons name="document-text" size={20} color="#666" />
+              <Ionicons name="document-text" size={20} color="#64748B" />
             </View>
             <View style={styles.resourceInfo}>
               <Text style={styles.resourceTitle}>Terms of Service</Text>
@@ -106,7 +106,7 @@ export default function HelpScreen() {
 
           <TouchableOpacity style={styles.resourceItem}>
             <View style={styles.resourceIcon}>
-              <Ionicons name="shield-checkmark" size={20} color="#666" />
+              <Ionicons name="shield-checkmark" size={20} color="#64748B" />
             </View>
             <View style={styles.resourceInfo}>
               <Text style={styles.resourceTitle}>Privacy Policy</Text>
@@ -117,7 +117,7 @@ export default function HelpScreen() {
 
           <TouchableOpacity style={styles.resourceItem}>
             <View style={styles.resourceIcon}>
-              <Ionicons name="information-circle" size={20} color="#666" />
+              <Ionicons name="information-circle" size={20} color="#64748B" />
             </View>
             <View style={styles.resourceInfo}>
               <Text style={styles.resourceTitle}>About Van Pooling</Text>
@@ -140,7 +140,7 @@ export default function HelpScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#0D1B2A',
   },
   scroll: {
     flex: 1,
@@ -157,7 +157,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   subtitle: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 16,
     marginTop: 4,
   },
@@ -189,7 +189,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   actionText: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 12,
     marginTop: 4,
   },
@@ -259,7 +259,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   resourceText: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 13,
     marginTop: 2,
   },

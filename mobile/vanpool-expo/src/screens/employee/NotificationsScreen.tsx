@@ -167,7 +167,7 @@ export default function NotificationsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#0D1B2A',
   },
   scroll: {
     flex: 1,
@@ -252,7 +252,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   notificationTime: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 12,
   },
   emptyCard: {
@@ -271,7 +271,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   emptyHint: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 14,
     marginTop: 4,
   },

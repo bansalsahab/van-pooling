@@ -10,7 +10,13 @@ from urllib import error, parse, request
 
 from app.core.config import settings
 from app.geo import haversine_distance_meters
-from app.schemas.maps import GeocodeResponse, RoutePlan, RouteStep, RouteWaypoint
+from app.schemas.maps import (
+    GeocodeResponse,
+    GeocodeSuggestion,
+    RoutePlan,
+    RouteStep,
+    RouteWaypoint,
+)
 
 
 _CACHE_TTL = timedelta(minutes=10)
@@ -74,6 +80,88 @@ def geocode_address(address: str) -> GeocodeResponse | None:
     )
     _write_cache(cache_key, geocode.model_dump(mode="json"))
     return geocode
+
+
+def suggest_addresses(query: str, limit: int = 5) -> list[GeocodeSuggestion]:
+    """Return address suggestions using Google Places with a fallback index."""
+    normalized = query.strip()
+    if len(normalized) < 2:
+        return []
+
+    safe_limit = max(1, min(limit, 10))
+    cache_key = f"suggest::{normalized.lower()}::{safe_limit}"
+    cached = _read_cache(cache_key)
+    if cached is not None:
+        return [GeocodeSuggestion(**item) for item in cached]
+
+    suggestions: list[GeocodeSuggestion] = []
+    if settings.google_maps_enabled:
+        query_params = {
+            "input": normalized,
+            "key": settings.GOOGLE_MAPS_API_KEY,
+            "language": settings.GOOGLE_MAPS_LANGUAGE,
+            "region": settings.GOOGLE_MAPS_REGION,
+        }
+        region = settings.GOOGLE_MAPS_REGION.strip().lower()
+        if region:
+            query_params["components"] = f"country:{region}"
+        url = (
+            "https://maps.googleapis.com/maps/api/place/autocomplete/json?"
+            f"{parse.urlencode(query_params)}"
+        )
+        try:
+            payload = _read_json(url)
+            status = str(payload.get("status") or "").upper()
+            if status in {"OK", "ZERO_RESULTS"}:
+                for prediction in (payload.get("predictions") or [])[:safe_limit]:
+                    description = str(prediction.get("description") or "").strip()
+                    if not description:
+                        continue
+                    suggestions.append(
+                        GeocodeSuggestion(
+                            description=description,
+                            place_id=prediction.get("place_id"),
+                            source="google_maps",
+                        )
+                    )
+            elif status:
+                logger.warning("Google Maps autocomplete returned status=%s", status)
+        except RuntimeError:
+            logger.info("Google Maps autocomplete unavailable; falling back to local suggestions.")
+
+    if not suggestions:
+        lowered = normalized.lower()
+        seen: set[str] = set()
+        coordinates = _parse_coordinate_query(lowered)
+        if coordinates is not None:
+            latitude, longitude = coordinates
+            description = f"{latitude:.5f}, {longitude:.5f}"
+            suggestions.append(
+                GeocodeSuggestion(
+                    description=description,
+                    place_id=None,
+                    source="fallback",
+                )
+            )
+            seen.add(description.lower())
+
+        for key, (label, _, _) in _FALLBACK_GEOCODE_INDEX.items():
+            searchable = f"{key} {label}".lower()
+            if lowered in searchable and label.lower() not in seen:
+                suggestions.append(
+                    GeocodeSuggestion(
+                        description=label,
+                        place_id=None,
+                        source="fallback",
+                    )
+                )
+                seen.add(label.lower())
+                if len(suggestions) >= safe_limit:
+                    break
+
+    payload = [item.model_dump(mode="json") for item in suggestions[:safe_limit]]
+    _write_cache(cache_key, payload)
+    return suggestions[:safe_limit]
 
 
 def _fallback_geocode(address: str) -> GeocodeResponse | None:

@@ -48,8 +48,19 @@ import type {
   VanSummary,
 } from "./types";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL?.trim() || "http://localhost:8000/api/v1";
+function resolveApiBaseUrl(): string {
+  const configured = import.meta.env.VITE_API_URL?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  // Use current hostname so LAN access works (e.g. 192.168.x.x:5173 -> 192.168.x.x:8000).
+  const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+  const hostname = window.location.hostname || "localhost";
+  return `${protocol}//${hostname}:8000/api/v1`;
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 type HttpMethod = "GET" | "POST" | "PUT";
 

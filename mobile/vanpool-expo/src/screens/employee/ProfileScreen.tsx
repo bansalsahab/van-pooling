@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -113,7 +115,11 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <KeyboardAvoidingView
+        style={styles.keyboardView}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{user.full_name?.charAt(0).toUpperCase() || 'U'}</Text>
@@ -173,6 +179,7 @@ export default function ProfileScreen() {
             style={[styles.primaryButton, saveProfileMutation.isPending && styles.disabledButton]}
             onPress={() => saveProfileMutation.mutate()}
             disabled={saveProfileMutation.isPending}
+            activeOpacity={0.8}
           >
             {saveProfileMutation.isPending ? (
               <ActivityIndicator color="#fff" />
@@ -216,6 +223,7 @@ export default function ProfileScreen() {
             style={[styles.secondaryButton, changePasswordMutation.isPending && styles.disabledButton]}
             onPress={() => changePasswordMutation.mutate()}
             disabled={changePasswordMutation.isPending}
+            activeOpacity={0.8}
           >
             {changePasswordMutation.isPending ? (
               <ActivityIndicator color="#fff" />
@@ -262,6 +270,7 @@ export default function ProfileScreen() {
           <Text style={styles.logoutText}>Sign out</Text>
         </TouchableOpacity>
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -270,6 +279,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0D1B2A',
+  },
+  keyboardView: {
+    flex: 1,
   },
   centerState: {
     flex: 1,

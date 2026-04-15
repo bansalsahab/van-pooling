@@ -722,6 +722,13 @@ export const backend = {
     });
   },
 
+  noShowPassenger(token: string, tripId: string, rideRequestId: string) {
+    return request<{ message: string }>(`/driver/trips/${tripId}/no-show/${rideRequestId}`, {
+      method: 'POST',
+      token,
+    });
+  },
+
   completeTrip(token: string, tripId: string) {
     return request<{ message: string }>(`/driver/trips/${tripId}/complete`, {
       method: 'POST',

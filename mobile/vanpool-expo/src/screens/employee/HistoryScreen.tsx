@@ -75,12 +75,12 @@ function RideHistoryItem({ ride }: { ride: RideSummary }) {
 
       <View style={styles.rideFooter}>
         <View style={styles.footerItem}>
-          <Ionicons name="people-outline" size={16} color="#666" />
+          <Ionicons name="people-outline" size={16} color="#64748B" />
           <Text style={styles.footerText}>{ride.passengers ?? 1} passenger(s)</Text>
         </View>
         {ride.driver_name && (
           <View style={styles.footerItem}>
-            <Ionicons name="person-outline" size={16} color="#666" />
+            <Ionicons name="person-outline" size={16} color="#64748B" />
             <Text style={styles.footerText}>{ride.driver_name}</Text>
           </View>
         )}
@@ -134,7 +134,7 @@ export default function HistoryScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#0D1B2A',
   },
   header: {
     padding: 24,
@@ -146,7 +146,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   subtitle: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 16,
     marginTop: 4,
   },
@@ -175,7 +175,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   timeText: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 14,
     marginTop: 2,
   },
@@ -227,7 +227,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   footerText: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 14,
   },
   emptyContainer: {
@@ -241,7 +241,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   emptyHint: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 14,
     marginTop: 4,
   },

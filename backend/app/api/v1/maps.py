@@ -3,8 +3,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_current_user
 from app.models.user import User
-from app.schemas.maps import GeocodeRequest, GeocodeResponse, RoutePlan, RoutePreviewRequest
-from app.services.maps_service import compute_route_plan, geocode_address
+from app.schemas.maps import (
+    GeocodeRequest,
+    GeocodeResponse,
+    GeocodeSuggestionRequest,
+    GeocodeSuggestionResponse,
+    RoutePlan,
+    RoutePreviewRequest,
+)
+from app.services.maps_service import compute_route_plan, geocode_address, suggest_addresses
 
 router = APIRouter(prefix="/maps", tags=["maps"])
 
@@ -23,6 +30,18 @@ def geocode(
             detail="Could not resolve that address with the configured maps provider.",
         )
     return result
+
+
+@router.post("/suggest", response_model=GeocodeSuggestionResponse)
+def suggest(
+    payload: GeocodeSuggestionRequest,
+    current_user: User = Depends(get_current_user),
+) -> GeocodeSuggestionResponse:
+    """Return maps autocomplete suggestions for a partial address query."""
+    del current_user
+    return GeocodeSuggestionResponse(
+        suggestions=suggest_addresses(payload.query, payload.limit)
+    )
 
 
 @router.post("/route-preview", response_model=RoutePlan)

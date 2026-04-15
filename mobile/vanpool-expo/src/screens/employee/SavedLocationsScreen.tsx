@@ -132,7 +132,7 @@ export default function SavedLocationsScreen() {
               value={homeAddress}
               onChangeText={setHomeAddress}
               placeholder="Enter your home address"
-              placeholderTextColor="#666"
+              placeholderTextColor="#64748B"
             />
           </View>
 
@@ -159,7 +159,7 @@ export default function SavedLocationsScreen() {
                 value={homeLat}
                 onChangeText={setHomeLat}
                 placeholder="0.000000"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
                 keyboardType="numeric"
               />
             </View>
@@ -170,7 +170,7 @@ export default function SavedLocationsScreen() {
                 value={homeLng}
                 onChangeText={setHomeLng}
                 placeholder="0.000000"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
                 keyboardType="numeric"
               />
             </View>
@@ -196,7 +196,7 @@ export default function SavedLocationsScreen() {
               value={officeAddress}
               onChangeText={setOfficeAddress}
               placeholder="Enter your office address"
-              placeholderTextColor="#666"
+              placeholderTextColor="#64748B"
             />
           </View>
 
@@ -223,7 +223,7 @@ export default function SavedLocationsScreen() {
                 value={officeLat}
                 onChangeText={setOfficeLat}
                 placeholder="0.000000"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
                 keyboardType="numeric"
               />
             </View>
@@ -234,7 +234,7 @@ export default function SavedLocationsScreen() {
                 value={officeLng}
                 onChangeText={setOfficeLng}
                 placeholder="0.000000"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
                 keyboardType="numeric"
               />
             </View>
@@ -261,7 +261,7 @@ export default function SavedLocationsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#0D1B2A',
   },
   scroll: {
     flex: 1,
@@ -278,7 +278,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   subtitle: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 16,
     marginTop: 4,
   },
@@ -310,7 +310,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   cardHint: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 14,
     marginTop: 2,
   },

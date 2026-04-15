@@ -213,7 +213,7 @@ export default function RecurringRidesScreen() {
                 value={name}
                 onChangeText={setName}
                 placeholder="e.g., Daily Commute"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
               />
             </View>
 
@@ -224,7 +224,7 @@ export default function RecurringRidesScreen() {
                 value={pickupAddress}
                 onChangeText={setPickupAddress}
                 placeholder="Enter pickup address"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
               />
               <TouchableOpacity 
                 style={styles.geocodeBtn}
@@ -241,7 +241,7 @@ export default function RecurringRidesScreen() {
                 value={destAddress}
                 onChangeText={setDestAddress}
                 placeholder="Enter destination address"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
               />
               <TouchableOpacity 
                 style={styles.geocodeBtn}
@@ -258,7 +258,7 @@ export default function RecurringRidesScreen() {
                 value={pickupTime}
                 onChangeText={setPickupTime}
                 placeholder="HH:MM"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
               />
             </View>
 
@@ -269,7 +269,7 @@ export default function RecurringRidesScreen() {
                 value={timezone}
                 onChangeText={setTimezone}
                 placeholder="Asia/Kolkata"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
                 autoCapitalize="none"
               />
               <ScrollView
@@ -354,7 +354,7 @@ export default function RecurringRidesScreen() {
                   <View style={styles.scheduleInfo}>
                     <Text style={styles.scheduleName}>{schedule.name}</Text>
                     <Text style={styles.scheduleTime}>
-                      <Ionicons name="time-outline" size={14} color="#666" /> {schedule.pickup_time_local}
+                      <Ionicons name="time-outline" size={14} color="#64748B" /> {schedule.pickup_time_local}
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -425,7 +425,7 @@ export default function RecurringRidesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#0D1B2A',
   },
   scroll: {
     flex: 1,
@@ -442,7 +442,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   subtitle: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 16,
     marginTop: 4,
   },
@@ -544,7 +544,7 @@ const styles = StyleSheet.create({
     borderColor: '#06C167',
   },
   dayBtnText: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 12,
     fontWeight: '600',
   },
@@ -590,7 +590,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   scheduleTime: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 14,
     marginTop: 4,
   },
@@ -639,7 +639,7 @@ const styles = StyleSheet.create({
     color: '#06C167',
   },
   nextPickup: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 12,
     marginTop: 12,
   },
@@ -659,7 +659,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   emptyHint: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 14,
     marginTop: 4,
     textAlign: 'center',

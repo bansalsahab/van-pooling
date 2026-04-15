@@ -174,7 +174,7 @@ export default function VehicleChecksScreen() {
                 value={notes}
                 onChangeText={setNotes}
                 placeholder="Add any comments or issues..."
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
                 multiline
                 numberOfLines={3}
               />

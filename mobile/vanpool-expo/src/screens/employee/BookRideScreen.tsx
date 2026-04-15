@@ -20,6 +20,7 @@ import { useNavigation } from '@react-navigation/native';
 import { backend } from '../../api/backend';
 import type { GeocodeResult } from '../../api/types';
 import { useAuthStore } from '../../store/authStore';
+import RouteMap from '../../components/RouteMap';
 
 type Suggestion = {
   description: string;
@@ -282,6 +283,16 @@ export default function BookRideScreen() {
             <Text style={styles.subtitle}>Live maps-assisted booking</Text>
           </View>
 
+          {(pickupResolved || dropoffResolved) && (
+            <View style={styles.mapContainer}>
+              <RouteMap
+                pickup={pickupResolved ? { latitude: pickupResolved.latitude, longitude: pickupResolved.longitude } : null}
+                destination={dropoffResolved ? { latitude: dropoffResolved.latitude, longitude: dropoffResolved.longitude } : null}
+                height={180}
+              />
+            </View>
+          )}
+
           {hasActiveRide && (
             <View style={styles.warningCard}>
               <Ionicons name="warning-outline" size={18} color="#F59E0B" />
@@ -498,6 +509,10 @@ const styles = StyleSheet.create({
   header: {
     padding: 24,
     paddingBottom: 16,
+  },
+  mapContainer: {
+    paddingHorizontal: 16,
+    marginBottom: 8,
   },
   title: {
     color: '#E2E8F0',

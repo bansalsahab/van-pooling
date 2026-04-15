@@ -128,7 +128,10 @@ export interface DriverDashboardSummary {
     plate_number?: string;
     license_plate?: string;
     capacity: number;
+    current_occupancy?: number;
     status?: string;
+    latitude?: number;
+    longitude?: number;
   };
   assigned_van?: {
     plate: string;

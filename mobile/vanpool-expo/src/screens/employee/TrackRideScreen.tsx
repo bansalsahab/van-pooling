@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -16,6 +16,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { backend } from '../../api/backend';
 import { useAuthStore } from '../../store/authStore';
+import LiveMap from '../../components/LiveMap';
+import { useLiveStream } from '../../hooks/useLiveStream';
 
 const RIDE_STEPS = [
   'requested',
@@ -66,6 +68,26 @@ export default function TrackRideScreen() {
     refetchInterval: 8000,
   });
 
+  const handleRideUpdate = useCallback((updatedRide: unknown) => {
+    queryClient.setQueryData(['employee', 'activeRide'], updatedRide);
+  }, [queryClient]);
+
+  const liveStream = useLiveStream(accessToken, {
+    onRideUpdate: handleRideUpdate,
+  });
+
+  const [streamStatus, setStreamStatus] = React.useState<'LIVE' | 'RECONNECTING' | 'OFFLINE'>('OFFLINE');
+
+  useEffect(() => {
+    if (liveStream.connectionState === 'live') {
+      setStreamStatus('LIVE');
+    } else if (liveStream.connectionState === 'reconnecting') {
+      setStreamStatus('RECONNECTING');
+    } else {
+      setStreamStatus('OFFLINE');
+    }
+  }, [liveStream.connectionState]);
+
   const cancelRideMutation = useMutation({
     mutationFn: async () => {
       const ride = activeRideQuery.data;
@@ -115,9 +137,34 @@ export default function TrackRideScreen() {
         )}
       >
         <View style={styles.header}>
-          <Text style={styles.title}>Track Ride</Text>
+          <View style={styles.headerTop}>
+            <Text style={styles.title}>Track Ride</Text>
+            <View style={[
+              styles.streamIndicator,
+              streamStatus === 'LIVE' && styles.streamLive,
+              streamStatus === 'RECONNECTING' && styles.streamReconnecting,
+            ]}>
+              <View style={[
+                styles.streamDot,
+                streamStatus === 'LIVE' && styles.streamDotLive,
+                streamStatus === 'RECONNECTING' && styles.streamDotReconnecting,
+              ]} />
+              <Text style={[
+                styles.streamText,
+                streamStatus === 'LIVE' && styles.streamTextLive,
+              ]}>
+                {streamStatus}
+              </Text>
+            </View>
+          </View>
           <Text style={styles.subtitle}>Live state from dispatch and driver actions</Text>
         </View>
+
+        {ride && (
+          <View style={styles.mapContainer}>
+            <LiveMap ride={ride} height={220} />
+          </View>
+        )}
 
         {!ride ? (
           <View style={styles.emptyCard}>
@@ -241,15 +288,59 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     paddingBottom: 8,
   },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   title: {
     color: '#E2E8F0',
     fontSize: 26,
     fontWeight: '700',
   },
+  streamIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  streamLive: {
+    backgroundColor: 'rgba(29,158,117,0.2)',
+  },
+  streamReconnecting: {
+    backgroundColor: 'rgba(245,158,11,0.2)',
+  },
+  streamDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#94A3B8',
+  },
+  streamDotLive: {
+    backgroundColor: '#1D9E75',
+  },
+  streamDotReconnecting: {
+    backgroundColor: '#F59E0B',
+  },
+  streamText: {
+    color: '#94A3B8',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  streamTextLive: {
+    color: '#A7F3D0',
+  },
   subtitle: {
     color: '#94A3B8',
     fontSize: 13,
     marginTop: 4,
+  },
+  mapContainer: {
+    marginHorizontal: 16,
+    marginBottom: 12,
   },
   emptyCard: {
     margin: 16,

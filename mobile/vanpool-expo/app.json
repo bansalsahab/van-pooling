@@ -26,7 +26,13 @@
     "plugins": [
       "@react-native-community/datetimepicker",
       "expo-secure-store",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow VanPool to use your location to track your commute and share with drivers."
+        }
+      ]
     ]
   }
 }

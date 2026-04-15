@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import type { DriverTripSummary, TripPassenger } from '../../api/types';
 import { useAuthStore } from '../../store/authStore';
 
 type DriverNextAction = 'accept' | 'start' | 'pickup' | 'dropoff' | 'complete';
+type DriverAvailabilityStatus = 'available' | 'on_trip' | 'offline' | 'maintenance';
 
 export default function ConsoleScreen() {
   const accessToken = useAuthStore((s) => s.accessToken);
@@ -29,6 +30,10 @@ export default function ConsoleScreen() {
   const [copilotQuestion, setCopilotQuestion] = useState('');
   const [copilotAnswer, setCopilotAnswer] = useState<string | null>(null);
   const [pickupOtp, setPickupOtp] = useState('');
+  const [opsMessage, setOpsMessage] = useState<string | null>(null);
+  const [opsError, setOpsError] = useState<string | null>(null);
+  const [lastHeartbeatAt, setLastHeartbeatAt] = useState<string | null>(null);
+  const heartbeatInFlightRef = useRef(false);
 
   const dashboardQuery = useQuery({
     queryKey: ['driver', 'dashboard'],
@@ -70,10 +75,52 @@ export default function ConsoleScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['driver'] });
       queryClient.invalidateQueries({ queryKey: ['driver', 'shifts'] });
+      setOpsError(null);
+      setOpsMessage('Shift started. Dispatch and location sync are now active.');
       Alert.alert('Shift started', 'You are now clocked in and ready for dispatch.');
     },
     onError: (error) => {
       Alert.alert('Shift Error', error instanceof Error ? error.message : 'Could not start shift');
+    },
+  });
+
+  const endShiftMutation = useMutation({
+    mutationFn: (shiftId: string) => backend.endDriverShift(accessToken!, shiftId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['driver'] });
+      queryClient.invalidateQueries({ queryKey: ['driver', 'shifts'] });
+      setOpsMessage('Shift clocked out successfully.');
+      setOpsError(null);
+    },
+    onError: (error) => {
+      Alert.alert('Clock-out failed', error instanceof Error ? error.message : 'Could not end shift.');
+    },
+  });
+
+  const updateStatusMutation = useMutation({
+    mutationFn: (status: DriverAvailabilityStatus) => backend.updateDriverStatus(accessToken!, status),
+    onSuccess: (_response, status) => {
+      queryClient.invalidateQueries({ queryKey: ['driver'] });
+      setOpsError(null);
+      setOpsMessage(`Van status set to ${status.replace(/_/g, ' ')}.`);
+    },
+    onError: (error) => {
+      Alert.alert('Status update failed', error instanceof Error ? error.message : 'Could not change status.');
+    },
+  });
+
+  const noShowMutation = useMutation({
+    mutationFn: (payload: { tripId: string; rideRequestId: string; passengerName?: string | null }) =>
+      backend.noShowPassenger(accessToken!, payload.tripId, payload.rideRequestId),
+    onSuccess: (_response, payload) => {
+      queryClient.invalidateQueries({ queryKey: ['driver'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      const name = payload.passengerName || 'Passenger';
+      setOpsError(null);
+      setOpsMessage(`${name} marked as no-show and dispatch alerted.`);
+    },
+    onError: (error) => {
+      Alert.alert('No-show failed', error instanceof Error ? error.message : 'Unable to mark no-show.');
     },
   });
 
@@ -164,6 +211,19 @@ export default function ConsoleScreen() {
   }, [dashboard]);
 
   const isOnShift = Boolean(activeShift || activeTrip);
+  const currentAvailability = String(dashboard?.van?.status ?? '').toLowerCase() as DriverAvailabilityStatus;
+  const heartbeatCoordinates = useMemo(() => {
+    const latitude = dashboard?.van?.latitude;
+    const longitude = dashboard?.van?.longitude;
+    if (typeof latitude === 'number' && typeof longitude === 'number') {
+      return { latitude, longitude };
+    }
+    const origin = activeTrip?.route?.origin;
+    if (typeof origin?.latitude === 'number' && typeof origin?.longitude === 'number') {
+      return { latitude: origin.latitude, longitude: origin.longitude };
+    }
+    return null;
+  }, [dashboard?.van?.latitude, dashboard?.van?.longitude, activeTrip?.route?.origin]);
   const hasQueryError = dashboardQuery.isError || activeTripQuery.isError || shiftsQuery.isError;
   const queryError = dashboardQuery.error ?? activeTripQuery.error ?? shiftsQuery.error ?? notificationsQuery.error;
   const queryErrorMessage = queryError instanceof Error
@@ -174,6 +234,45 @@ export default function ConsoleScreen() {
     ? (dashboardQuery.isFetching || activeTripQuery.isFetching ? 'Syncing' : 'Connected')
     : 'Degraded';
   const connectionColor = isConnected ? '#1D9E75' : '#F59E0B';
+
+  const sendHeartbeat = useCallback(async (showMessage: boolean) => {
+    if (!accessToken || !heartbeatCoordinates || heartbeatInFlightRef.current) {
+      return;
+    }
+    heartbeatInFlightRef.current = true;
+    try {
+      await backend.updateDriverLocation(
+        accessToken,
+        heartbeatCoordinates.latitude,
+        heartbeatCoordinates.longitude,
+      );
+      setLastHeartbeatAt(new Date().toISOString());
+      setOpsError(null);
+      if (showMessage) {
+        setOpsMessage('Live location heartbeat sent to dispatch.');
+      }
+      queryClient.invalidateQueries({ queryKey: ['driver', 'dashboard'] });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not send driver location.';
+      setOpsError(message);
+      if (showMessage) {
+        Alert.alert('Location update failed', message);
+      }
+    } finally {
+      heartbeatInFlightRef.current = false;
+    }
+  }, [accessToken, heartbeatCoordinates, queryClient]);
+
+  useEffect(() => {
+    if (!isOnShift || !heartbeatCoordinates) {
+      return;
+    }
+    void sendHeartbeat(false);
+    const intervalId = setInterval(() => {
+      void sendHeartbeat(false);
+    }, 45000);
+    return () => clearInterval(intervalId);
+  }, [isOnShift, heartbeatCoordinates, sendHeartbeat]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -225,6 +324,23 @@ export default function ConsoleScreen() {
           </View>
         </View>
 
+        {opsMessage && (
+          <View style={styles.successCard}>
+            <Ionicons name="checkmark-circle-outline" size={16} color="#1D9E75" />
+            <Text style={styles.successText}>{opsMessage}</Text>
+          </View>
+        )}
+
+        {opsError && (
+          <View style={styles.errorCard}>
+            <View style={styles.errorRow}>
+              <Ionicons name="warning-outline" size={16} color="#F59E0B" />
+              <Text style={styles.errorTitle}>Driver operation issue</Text>
+            </View>
+            <Text style={styles.errorBody}>{opsError}</Text>
+          </View>
+        )}
+
         {activeShift && (
           <View style={styles.shiftInfoCard}>
             <Ionicons name="time-outline" size={16} color="#1D9E75" />
@@ -233,6 +349,54 @@ export default function ConsoleScreen() {
             </Text>
           </View>
         )}
+
+        <View style={styles.statusControlsCard}>
+          <Text style={styles.statusControlsTitle}>Availability</Text>
+          <View style={styles.statusChipsRow}>
+            {(['available', 'on_trip', 'offline', 'maintenance'] as DriverAvailabilityStatus[]).map((status) => {
+              const isActive = currentAvailability === status;
+              return (
+                <TouchableOpacity
+                  key={status}
+                  style={[styles.statusChip, isActive && styles.statusChipActive]}
+                  onPress={() => updateStatusMutation.mutate(status)}
+                  disabled={updateStatusMutation.isPending}
+                >
+                  <Text style={[styles.statusChipText, isActive && styles.statusChipTextActive]}>
+                    {status.replace(/_/g, ' ')}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        <View style={styles.heartbeatCard}>
+          <View style={styles.heartbeatHeader}>
+            <Text style={styles.heartbeatTitle}>Location heartbeat</Text>
+            <Text style={styles.heartbeatMeta}>
+              {lastHeartbeatAt
+                ? `Last: ${new Date(lastHeartbeatAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+                : 'Not sent yet'}
+            </Text>
+          </View>
+          <Text style={styles.heartbeatCoords}>
+            {heartbeatCoordinates
+              ? `${heartbeatCoordinates.latitude.toFixed(5)}, ${heartbeatCoordinates.longitude.toFixed(5)}`
+              : 'Coordinates unavailable'}
+          </Text>
+          <TouchableOpacity
+            style={[
+              styles.heartbeatButton,
+              (!heartbeatCoordinates || !isOnShift || heartbeatInFlightRef.current) && styles.actionButtonDisabled,
+            ]}
+            onPress={() => void sendHeartbeat(true)}
+            disabled={!heartbeatCoordinates || !isOnShift || heartbeatInFlightRef.current}
+          >
+            <Ionicons name="locate-outline" size={16} color="#fff" />
+            <Text style={styles.heartbeatButtonText}>Send heartbeat now</Text>
+          </TouchableOpacity>
+        </View>
 
         {hasQueryError && (
           <View style={styles.errorCard}>
@@ -267,6 +431,25 @@ export default function ConsoleScreen() {
               <>
                 <Ionicons name="play-circle" size={24} color="#fff" />
                 <Text style={styles.startShiftText}>Start Shift</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
+
+        {isOnShift && activeShift && (
+          <TouchableOpacity
+            style={[styles.endShiftButton, (endShiftMutation.isPending || Boolean(activeTrip)) && styles.actionButtonDisabled]}
+            onPress={() => endShiftMutation.mutate(activeShift.id)}
+            disabled={endShiftMutation.isPending || Boolean(activeTrip)}
+          >
+            {endShiftMutation.isPending ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="stop-circle-outline" size={20} color="#fff" />
+                <Text style={styles.endShiftText}>
+                  {activeTrip ? 'Finish active trip before clock-out' : 'Clock Out Shift'}
+                </Text>
               </>
             )}
           </TouchableOpacity>
@@ -372,6 +555,22 @@ export default function ConsoleScreen() {
                     <View style={styles.passengerStatusPill}>
                       <Text style={styles.passengerStatusText}>{passengerStatus}</Text>
                     </View>
+                    {['waiting', 'assigned', 'notified'].includes(passengerStatus) && (
+                      <TouchableOpacity
+                        style={styles.noShowButton}
+                        onPress={() => {
+                          if (!activeTrip) return;
+                          noShowMutation.mutate({
+                            tripId: activeTrip.id,
+                            rideRequestId: passenger.ride_request_id,
+                            passengerName: passenger.passenger_name,
+                          });
+                        }}
+                        disabled={noShowMutation.isPending}
+                      >
+                        <Text style={styles.noShowButtonText}>No-show</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 );
               })}
@@ -622,6 +821,25 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 4,
   },
+  successCard: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(29,158,117,0.45)',
+    backgroundColor: 'rgba(29,158,117,0.14)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  successText: {
+    color: '#A7F3D0',
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+  },
   shiftInfoCard: {
     marginHorizontal: 16,
     marginTop: 10,
@@ -639,6 +857,90 @@ const styles = StyleSheet.create({
     color: '#A7F3D0',
     fontSize: 12,
     fontWeight: '600',
+  },
+  statusControlsCard: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: '#1A2E45',
+    padding: 12,
+    gap: 8,
+  },
+  statusControlsTitle: {
+    color: '#E2E8F0',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  statusChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  statusChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: '#0F2135',
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  statusChipActive: {
+    borderColor: '#00B4D8',
+    backgroundColor: '#12334A',
+  },
+  statusChipText: {
+    color: '#CBD5E1',
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
+  statusChipTextActive: {
+    color: '#BAE6FD',
+  },
+  heartbeatCard: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: '#1A2E45',
+    padding: 12,
+    gap: 8,
+  },
+  heartbeatHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  heartbeatTitle: {
+    color: '#E2E8F0',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  heartbeatMeta: {
+    color: '#94A3B8',
+    fontSize: 11,
+  },
+  heartbeatCoords: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
+  },
+  heartbeatButton: {
+    minHeight: 40,
+    borderRadius: 10,
+    backgroundColor: '#00B4D8',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+  },
+  heartbeatButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   errorCard: {
     marginHorizontal: 16,
@@ -692,6 +994,22 @@ const styles = StyleSheet.create({
   startShiftText: {
     color: '#fff',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  endShiftButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1D9E75',
+    marginHorizontal: 16,
+    marginBottom: 8,
+    height: 46,
+    borderRadius: 12,
+    gap: 8,
+  },
+  endShiftText: {
+    color: '#fff',
+    fontSize: 14,
     fontWeight: '600',
   },
   actionLinksRow: {
@@ -891,6 +1209,19 @@ const styles = StyleSheet.create({
     color: '#CBD5E1',
     fontSize: 11,
     textTransform: 'capitalize',
+  },
+  noShowButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.45)',
+    backgroundColor: 'rgba(239,68,68,0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  noShowButtonText: {
+    color: '#FCA5A5',
+    fontSize: 10,
+    fontWeight: '700',
   },
   actionButton: {
     height: 48,

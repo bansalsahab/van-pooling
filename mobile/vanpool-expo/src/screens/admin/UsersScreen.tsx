@@ -99,7 +99,7 @@ export default function UsersScreen() {
       case 'admin': return '#8B5CF6';
       case 'driver': return '#3B82F6';
       case 'employee': return '#06C167';
-      default: return '#666';
+      default: return '#64748B';
     }
   };
 
@@ -233,7 +233,7 @@ export default function UsersScreen() {
                     );
                   }}
                 >
-                  <Ionicons name="ellipsis-vertical" size={20} color="#666" />
+                  <Ionicons name="ellipsis-vertical" size={20} color="#64748B" />
                 </TouchableOpacity>
               </View>
             ))}
@@ -279,7 +279,7 @@ export default function UsersScreen() {
                 value={newName}
                 onChangeText={setNewName}
                 placeholder="Enter full name"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
               />
             </View>
 
@@ -290,7 +290,7 @@ export default function UsersScreen() {
                 value={newEmail}
                 onChangeText={setNewEmail}
                 placeholder="Enter email"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
                 keyboardType="email-address"
                 autoCapitalize="none"
               />
@@ -303,7 +303,7 @@ export default function UsersScreen() {
                 value={newPassword}
                 onChangeText={setNewPassword}
                 placeholder="Enter password"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
                 secureTextEntry
               />
             </View>
@@ -315,7 +315,7 @@ export default function UsersScreen() {
                 value={newPhone}
                 onChangeText={setNewPhone}
                 placeholder="Enter phone (optional)"
-                placeholderTextColor="#666"
+                placeholderTextColor="#64748B"
                 keyboardType="phone-pad"
               />
             </View>
@@ -377,7 +377,7 @@ export default function UsersScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#0D1B2A',
   },
   scroll: {
     flex: 1,
@@ -394,7 +394,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   subtitle: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 16,
     marginTop: 4,
   },
@@ -448,7 +448,7 @@ const styles = StyleSheet.create({
     borderColor: '#06C167',
   },
   filterBtnText: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -492,7 +492,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   userEmail: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 14,
     marginTop: 2,
   },
@@ -598,7 +598,7 @@ const styles = StyleSheet.create({
     borderColor: '#06C167',
   },
   roleSelectorText: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -618,7 +618,7 @@ const styles = StyleSheet.create({
     borderColor: '#8B5CF6',
   },
   scopeBtnText: {
-    color: '#666',
+    color: '#64748B',
     fontSize: 13,
     fontWeight: '600',
   },

@@ -52,9 +52,21 @@ ALLOWED_HEADERS = [
 ]
 
 if settings.BACKEND_CORS_ORIGINS:
+    allow_origin_regex = None
+    if settings.ENVIRONMENT != "production":
+        # Allow common local-network dev origins (e.g., 192.168.x.x:5173) during development.
+        allow_origin_regex = (
+            r"^https?://("
+            r"localhost|127\.0\.0\.1|10\.0\.2\.2|"
+            r"192\.168\.\d{1,3}\.\d{1,3}|"
+            r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+            r"172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}"
+            r")(:\d+)?$"
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
+        allow_origin_regex=allow_origin_regex,
         allow_credentials=True,
         allow_methods=ALLOWED_METHODS,
         allow_headers=ALLOWED_HEADERS,

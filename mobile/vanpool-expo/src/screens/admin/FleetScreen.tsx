@@ -17,6 +17,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuthStore } from '../../store/authStore';
 import { backend } from '../../api/backend';
+import FleetMap from '../../components/FleetMap';
 
 type VanFilter = 'all' | 'active' | 'available' | 'offline';
 
@@ -50,6 +51,7 @@ export default function FleetScreen() {
   const accessToken = useAuthStore((s) => s.accessToken);
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<VanFilter>('all');
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newPlate, setNewPlate] = useState('');
   const [newCapacity, setNewCapacity] = useState('8');
@@ -119,9 +121,21 @@ export default function FleetScreen() {
               {activeCount} active · {availableCount} available · {vans.length} total
             </Text>
           </View>
-          <TouchableOpacity style={styles.addBtn} onPress={() => setShowCreateModal(true)}>
-            <Ionicons name="add" size={22} color="#fff" />
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.viewToggleBtn}
+              onPress={() => setViewMode(viewMode === 'list' ? 'map' : 'list')}
+            >
+              <Ionicons
+                name={viewMode === 'list' ? 'map' : 'list'}
+                size={20}
+                color="#E2E8F0"
+              />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.addBtn} onPress={() => setShowCreateModal(true)}>
+              <Ionicons name="add" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.statsRow}>
@@ -138,6 +152,12 @@ export default function FleetScreen() {
             <Text style={styles.statLabel}>Available</Text>
           </View>
         </View>
+
+        {viewMode === 'map' && vans.length > 0 && (
+          <View style={styles.mapContainer}>
+            <FleetMap vans={vans} height={200} />
+          </View>
+        )}
 
         <ScrollView
           horizontal
@@ -313,6 +333,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 3,
   },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+  },
   addBtn: {
     width: 44,
     height: 44,
@@ -320,6 +345,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#00B4D8',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  viewToggleBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#1A2E45',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  mapContainer: {
+    paddingHorizontal: 16,
+    marginBottom: 12,
   },
   statsRow: {
     flexDirection: 'row',
