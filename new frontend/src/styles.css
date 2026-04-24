@@ -4964,3 +4964,28 @@ td {
     font-size: 0.72rem;
   }
 }
+
+.frontend-switcher-link {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 9998;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  padding: 0.7rem 1rem;
+  border: 1px solid rgba(216, 192, 138, 0.36);
+  border-radius: 999px;
+  background: rgba(8, 10, 13, 0.86);
+  color: #f7f1e4;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(14px);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.frontend-switcher-link:hover {
+  background: rgba(216, 192, 138, 0.18);
+  color: #fff8e7;
+}

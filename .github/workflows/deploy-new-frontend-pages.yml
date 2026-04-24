@@ -1,10 +1,11 @@
-name: Deploy New Frontend to GitHub Pages
+name: Deploy Frontends to GitHub Pages
 
 on:
   push:
     branches:
       - main
     paths:
+      - "frontend/**"
       - "new frontend/**"
       - ".github/workflows/deploy-new-frontend-pages.yml"
   workflow_dispatch:
@@ -36,8 +37,12 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
-      - name: Compute base path
-        run: echo "VITE_BASE_PATH=/${GITHUB_REPOSITORY#*/}/" >> "$GITHUB_ENV"
+      - name: Compute deployment paths
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          echo "PAGES_BASE=/${REPO_NAME}/" >> "$GITHUB_ENV"
+          echo "CLASSIC_FRONTEND_BASE=/${REPO_NAME}/classic/" >> "$GITHUB_ENV"
+          echo "NEW_FRONTEND_BASE=/${REPO_NAME}/new/" >> "$GITHUB_ENV"
 
       - name: Validate optional deployment env
         env:
@@ -49,25 +54,208 @@ jobs:
             echo "::warning::VITE_API_URL is not set (variable or secret). Deploy will succeed, but backend calls from Pages will fail."
           fi
 
-      - name: Install dependencies
-        working-directory: "new frontend"
+      - name: Install classic frontend dependencies
+        working-directory: "frontend"
         run: npm ci
 
-      - name: Build app
-        working-directory: "new frontend"
+      - name: Build classic frontend
+        working-directory: "frontend"
         env:
+          VITE_BASE_PATH: ${{ env.CLASSIC_FRONTEND_BASE }}
+          VITE_FRONTEND_SWITCH_URL: ${{ env.NEW_FRONTEND_BASE }}
+          VITE_FRONTEND_SWITCH_LABEL: View new frontend
           VITE_API_URL: ${{ vars.VITE_API_URL || secrets.VITE_API_URL }}
           VITE_GOOGLE_MAPS_API_KEY: ${{ vars.VITE_GOOGLE_MAPS_API_KEY || secrets.VITE_GOOGLE_MAPS_API_KEY }}
           VITE_GOOGLE_MAPS_MAP_ID: ${{ vars.VITE_GOOGLE_MAPS_MAP_ID || secrets.VITE_GOOGLE_MAPS_MAP_ID }}
         run: npm run build
 
-      - name: Disable Jekyll processing
-        run: touch "new frontend/dist/.nojekyll"
+      - name: Install new frontend dependencies
+        working-directory: "new frontend"
+        run: npm ci
+
+      - name: Build new frontend
+        working-directory: "new frontend"
+        env:
+          VITE_BASE_PATH: ${{ env.NEW_FRONTEND_BASE }}
+          VITE_FRONTEND_SWITCH_URL: ${{ env.CLASSIC_FRONTEND_BASE }}
+          VITE_FRONTEND_SWITCH_LABEL: View 5173 frontend
+          VITE_API_URL: ${{ vars.VITE_API_URL || secrets.VITE_API_URL }}
+          VITE_GOOGLE_MAPS_API_KEY: ${{ vars.VITE_GOOGLE_MAPS_API_KEY || secrets.VITE_GOOGLE_MAPS_API_KEY }}
+          VITE_GOOGLE_MAPS_MAP_ID: ${{ vars.VITE_GOOGLE_MAPS_MAP_ID || secrets.VITE_GOOGLE_MAPS_MAP_ID }}
+        run: npm run build
+
+      - name: Assemble frontend switcher artifact
+        run: |
+          mkdir -p pages-dist/classic pages-dist/new
+          cp -R "frontend/dist/." pages-dist/classic/
+          cp -R "new frontend/dist/." pages-dist/new/
+          touch pages-dist/.nojekyll
+          cat > pages-dist/index.html <<EOF
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="UTF-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+              <title>Van Pooling Frontend Switcher</title>
+              <style>
+                :root {
+                  color-scheme: dark;
+                  font-family: "Aptos Display", "Segoe UI", sans-serif;
+                  background: #080a0d;
+                  color: #f7f1e4;
+                }
+                * { box-sizing: border-box; }
+                body {
+                  min-height: 100vh;
+                  margin: 0;
+                  display: grid;
+                  place-items: center;
+                  padding: 2rem;
+                  background:
+                    radial-gradient(circle at 18% 8%, rgba(216, 192, 138, 0.14), transparent 28rem),
+                    radial-gradient(circle at 82% 18%, rgba(56, 215, 196, 0.12), transparent 26rem),
+                    #080a0d;
+                }
+                main {
+                  width: min(980px, 100%);
+                  display: grid;
+                  gap: 1.25rem;
+                }
+                .hero {
+                  border: 1px solid rgba(226, 232, 240, 0.12);
+                  border-radius: 18px;
+                  padding: clamp(1.5rem, 4vw, 3rem);
+                  background: linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018));
+                }
+                .mark {
+                  width: 48px;
+                  height: 48px;
+                  display: grid;
+                  place-items: center;
+                  border-radius: 14px;
+                  background: linear-gradient(145deg, #f0d99d, #d8c08a);
+                  color: #080a0d;
+                  font-weight: 900;
+                  margin-bottom: 1.25rem;
+                }
+                h1 {
+                  margin: 0;
+                  max-width: 12ch;
+                  font-size: clamp(2.4rem, 7vw, 5rem);
+                  line-height: 0.98;
+                }
+                p {
+                  max-width: 58ch;
+                  color: #a8b3c2;
+                  font-size: 1rem;
+                  line-height: 1.65;
+                }
+                .grid {
+                  display: grid;
+                  grid-template-columns: repeat(2, minmax(0, 1fr));
+                  gap: 1rem;
+                }
+                a {
+                  min-height: 14rem;
+                  display: flex;
+                  flex-direction: column;
+                  justify-content: space-between;
+                  gap: 1rem;
+                  padding: 1.25rem;
+                  border: 1px solid rgba(226, 232, 240, 0.12);
+                  border-radius: 14px;
+                  background: #141922;
+                  color: inherit;
+                  text-decoration: none;
+                  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+                }
+                a:hover {
+                  transform: translateY(-2px);
+                  border-color: rgba(216, 192, 138, 0.38);
+                  background: #1b222c;
+                }
+                span {
+                  color: #d8c08a;
+                  font-size: 0.75rem;
+                  font-weight: 900;
+                  letter-spacing: 0.16em;
+                  text-transform: uppercase;
+                }
+                strong {
+                  display: block;
+                  font-size: 1.6rem;
+                }
+                small {
+                  color: #8f9baa;
+                  font-size: 0.95rem;
+                  line-height: 1.5;
+                }
+                @media (max-width: 720px) {
+                  .grid { grid-template-columns: 1fr; }
+                }
+              </style>
+            </head>
+            <body>
+              <main>
+                <section class="hero">
+                  <div class="mark">VP</div>
+                  <h1>Choose your Van Pooling frontend.</h1>
+                  <p>Open the active premium frontend or the 5173 frontend build. Each deployed app also includes a switch link in the bottom-right corner.</p>
+                </section>
+                <section class="grid" aria-label="Frontend choices">
+                  <a href="${NEW_FRONTEND_BASE}">
+                    <span>New frontend</span>
+                    <strong>Premium operations UI</strong>
+                    <small>Deployed from the <code>new frontend</code> folder.</small>
+                  </a>
+                  <a href="${CLASSIC_FRONTEND_BASE}">
+                    <span>5173 frontend</span>
+                    <strong>Classic/current local UI</strong>
+                    <small>Deployed from the <code>frontend</code> folder that runs on port 5173.</small>
+                  </a>
+                </section>
+              </main>
+            </body>
+          </html>
+          EOF
+          cat > pages-dist/404.html <<EOF
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="UTF-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+              <title>Opening Van Pooling</title>
+              <script>
+                (function () {
+                  var appTargets = ["${CLASSIC_FRONTEND_BASE}", "${NEW_FRONTEND_BASE}"];
+                  var currentPath = window.location.pathname;
+                  var matchedTarget = appTargets.find(function (target) {
+                    return currentPath === target.replace(/\/$/, "") || currentPath.indexOf(target) === 0;
+                  });
+
+                  if (matchedTarget) {
+                    window.sessionStorage.setItem(
+                      "vanpool.redirectPath",
+                      currentPath + window.location.search + window.location.hash
+                    );
+                    window.location.replace(matchedTarget);
+                    return;
+                  }
+
+                  window.location.replace("${PAGES_BASE}");
+                })();
+              </script>
+            </head>
+            <body>
+              <p>Opening Van Pooling...</p>
+            </body>
+          </html>
+          EOF
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: "new frontend/dist"
+          path: "pages-dist"
 
   deploy:
     environment:

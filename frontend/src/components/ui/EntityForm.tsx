@@ -22,13 +22,14 @@ export function EntityForm({
   disabled = false,
 }: EntityFormProps) {
   return (
-    <form className="panel inset-panel stack" onSubmit={onSubmit}>
-      <div>
-        <p className="eyebrow">Form</p>
+    <form className="panel inset-panel stack entity-form" onSubmit={onSubmit}>
+      <div className="entity-form-header">
         <h3>{title}</h3>
         {description && <p className="muted-copy">{description}</p>}
       </div>
+      <div className="entity-form-divider" />
       {children}
+      <div className="entity-form-divider" />
       <button className="primary-button" disabled={disabled || busy} type="submit">
         {busy ? submittingLabel : submitLabel}
       </button>

@@ -132,6 +132,7 @@ describe("EmployeeDashboard", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /cancel before pickup/i }));
+    await user.click(screen.getByRole("button", { name: /yes, cancel ride/i }));
 
     await waitFor(() => {
       expect(cancelRideMock).toHaveBeenCalledWith("employee-token", "ride-1");

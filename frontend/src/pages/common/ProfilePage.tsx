@@ -82,14 +82,47 @@ export function ProfilePage() {
     }
   }
 
+  const initials = (user?.name || "U")
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+
+  const roleName = user?.role
+    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
+    : "User";
+
   return (
     <AppLayout
       title="Profile Settings"
-      subtitle="Manage your account details and notification preferences."
+      subtitle="Manage your account details, security, and notification preferences."
     >
+      {/* Profile Identity Card */}
+      <div className="profile-identity-card">
+        <div className="profile-avatar">{initials}</div>
+        <div className="profile-identity-info">
+          <h3 className="profile-identity-name">{user?.name || "User"}</h3>
+          <p className="profile-identity-email">{user?.email}</p>
+          <div className="profile-identity-meta">
+            <span className="profile-role-badge">{roleName}</span>
+            {user?.company_name && (
+              <span className="profile-company-tag">{user.company_name}</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {(message || error) && (
+        <div className="stack compact">
+          {message && <div className="success-banner">{message}</div>}
+          {error && <div className="error-banner">{error}</div>}
+        </div>
+      )}
+
       <div className="content-grid two-column">
         <EntityForm
-          title="Personal details"
+          title="Personal Details"
           description="Keep your contact details up to date for dispatch and support."
           onSubmit={handleSaveProfile}
           submitLabel="Save profile"
@@ -114,7 +147,7 @@ export function ProfilePage() {
           </label>
           <div className="stack compact">
             <p className="eyebrow">Notification preferences</p>
-            <label>
+            <label className="checkbox-row">
               <input
                 type="checkbox"
                 checked={preferences.push}
@@ -122,9 +155,9 @@ export function ProfilePage() {
                   setPreferences((current) => ({ ...current, push: event.target.checked }))
                 }
               />
-              Push updates
+              <span>Push updates</span>
             </label>
-            <label>
+            <label className="checkbox-row">
               <input
                 type="checkbox"
                 checked={preferences.sms}
@@ -132,9 +165,9 @@ export function ProfilePage() {
                   setPreferences((current) => ({ ...current, sms: event.target.checked }))
                 }
               />
-              SMS alerts
+              <span>SMS alerts</span>
             </label>
-            <label>
+            <label className="checkbox-row">
               <input
                 type="checkbox"
                 checked={preferences.email}
@@ -142,7 +175,7 @@ export function ProfilePage() {
                   setPreferences((current) => ({ ...current, email: event.target.checked }))
                 }
               />
-              Email updates
+              <span>Email updates</span>
             </label>
           </div>
         </EntityForm>
@@ -189,13 +222,6 @@ export function ProfilePage() {
           </label>
         </EntityForm>
       </div>
-
-      {(message || error) && (
-        <div className="stack compact">
-          {message && <div className="success-banner">{message}</div>}
-          {error && <div className="error-banner">{error}</div>}
-        </div>
-      )}
     </AppLayout>
   );
 }

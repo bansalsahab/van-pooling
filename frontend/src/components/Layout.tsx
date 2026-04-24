@@ -194,11 +194,16 @@ export function AppLayout({
 
         <div className="sidebar-footer">
           <div className="user-chip">
-            <strong>{user?.name}</strong>
-            <span>
-              {user?.role}
-              {user?.role === "admin" && user?.admin_scope ? ` - ${user.admin_scope}` : ""}
-            </span>
+            <div className="user-chip-avatar">
+              {(user?.name || "U").split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2)}
+            </div>
+            <div className="user-chip-info">
+              <strong>{user?.name}</strong>
+              <span className="user-chip-role">
+                {user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : ""}
+                {user?.role === "admin" && user?.admin_scope ? ` · ${user.admin_scope}` : ""}
+              </span>
+            </div>
           </div>
           {user?.role === "driver" && (
             <button

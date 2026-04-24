@@ -2,7 +2,7 @@ import { Navigate, Outlet, Route, Routes } from "react-router-dom";
 
 import { useAuth } from "./state/auth";
 import type { UserProfile } from "./lib/types";
-import { AuthPage, defaultRoute } from "./pages/AuthPage";
+import { SwissLandingPage as AuthPage, defaultRoute } from "./pages/SwissLandingPage";
 import { AdminAnalyticsPage } from "./pages/admin/AnalyticsPage";
 import { AdminBillingPage } from "./pages/admin/BillingPage";
 import { AdminFleetPage } from "./pages/admin/FleetPage";
