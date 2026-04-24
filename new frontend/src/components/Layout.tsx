@@ -222,6 +222,13 @@ export function AppLayout({
             <h2>{title}</h2>
             <p>{subtitle}</p>
           </div>
+          <div className="page-header-actions" aria-label="Workspace status">
+            <span className="header-status-pill">
+              <span className="header-status-dot" />
+              Live workspace
+            </span>
+            <span className="header-scope-pill">{user?.role || "workspace"}</span>
+          </div>
         </header>
         {children}
       </main>

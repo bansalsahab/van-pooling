@@ -665,15 +665,16 @@ export function AuthPage() {
       <main id="top">
         <section className="landing-hero">
           <div className="landing-hero-copy reveal-on-scroll">
-            <p className="eyebrow">Demand-responsive commuting</p>
+            <p className="eyebrow">Executive mobility command center</p>
             <h1 className="landing-headline">
-              Move <span className="headline-word delay-1">employees</span>,{" "}
+              Premium commuter operations for{" "}
+              <span className="headline-word delay-1">employees</span>,{" "}
               <span className="headline-word delay-2">drivers</span>, and{" "}
-              <span className="headline-word delay-3">operators</span> through one shared system.
+              <span className="headline-word delay-3">fleet leaders</span>.
             </h1>
             <p className="hero-copy">
-              Replace fixed shuttle schedules with demand-responsive pooling. One platform for every
-              role in your fleet.
+              Replace fixed shuttle schedules with a demand-responsive operating layer that keeps
+              every request, route, van, and exception visible in one refined workspace.
             </p>
             <div className="landing-hero-actions">
               <button
@@ -681,14 +682,14 @@ export function AuthPage() {
                 onClick={() => openAuth("employee", "register")}
                 type="button"
               >
-                Get Started Free
+                Deploy Workspace
               </button>
               <a className="secondary-button" href="#platform-preview">
-                Watch 2-min Demo
+                View Operations Preview
               </a>
             </div>
             <div className="landing-trust-row">
-              <span>Trusted by teams at</span>
+              <span>Trusted by mobility teams at</span>
               {TRUSTED_TEAMS.map((team) => (
                 <span className="trust-pill" key={team}>
                   {team}
@@ -732,7 +733,7 @@ export function AuthPage() {
                 <span className="browser-dot" />
                 <span className="browser-dot" />
                 <span className="browser-dot" />
-                <span className="browser-title">Operations command preview</span>
+                <span className="browser-title">Executive operations preview</span>
               </div>
               <div className="ops-browser-content">
                 <div className="ops-mini-map">
@@ -1082,7 +1083,7 @@ export function AuthPage() {
         <section className="final-cta reveal-on-scroll" id="final-cta">
           <div className="cta-route-lines" />
           <div className="cta-content">
-            <h2>Ready to replace your shuttle schedule?</h2>
+            <h2>Ready to run commuter mobility like a premium operation?</h2>
             <div className="landing-hero-actions">
               <Link className="primary-button" to="/contact">
                 Request a Demo
